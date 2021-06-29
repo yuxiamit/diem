@@ -1,14 +1,13 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use channel::{Sender, Receiver};
-use consensus_types::block::Block;
+use channel::{Receiver, Sender};
+use consensus_types::{block::Block, executed_block::ExecutedBlock};
 use diem_infallible::Mutex;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use execution_correctness::ExecutionCorrectness;
 use executor_types::Error as ExecutionError;
-use consensus_types::executed_block::ExecutedBlock;
-use futures::{StreamExt, SinkExt};
+use futures::{SinkExt, StreamExt};
 
 pub struct ExecutionPhase {
     executor_channel_recv: Receiver<(Vec<Block>, LedgerInfoWithSignatures)>,
@@ -31,19 +30,25 @@ impl ExecutionPhase {
 
     pub async fn start(mut self) {
         while let Some((vecblock, ledger_info)) = self.executor_channel_recv.next().await {
-
-            let executed_blocks: Vec<ExecutedBlock> = vecblock.into_iter().map(|b| {
-                let state_compute_result = self.execution_correctness_client.lock()
-                    .execute_block(b.clone(), b.parent_id()).unwrap();
-                ExecutedBlock::new(b, state_compute_result)
-            }).collect();
+            let executed_blocks: Vec<ExecutedBlock> = vecblock
+                .into_iter()
+                .map(|b| {
+                    let state_compute_result = self
+                        .execution_correctness_client
+                        .lock()
+                        .execute_block(b.clone(), b.parent_id())
+                        .unwrap();
+                    ExecutedBlock::new(b, state_compute_result)
+                })
+                .collect();
 
             self.commit_channel_send
                 .send((executed_blocks, ledger_info))
                 .await
                 .map_err(|e| ExecutionError::InternalError {
-                    error: e.to_string()
-                }).unwrap();
+                    error: e.to_string(),
+                })
+                .unwrap();
         }
     }
 }

@@ -8,11 +8,12 @@ use consensus_types::{
 };
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_metrics::monitor;
-use diem_types::epoch_change::EpochChangeProof;
+use diem_types::{
+    epoch_change::EpochChangeProof, ledger_info::LedgerInfoWithSignatures,
+    validator_verifier::ValidatorVerifier,
+};
 use safety_rules::{ConsensusState, Error, TSafetyRules};
 use std::sync::Arc;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::ValidatorVerifier;
 
 /// Wrap safety rules with counters.
 pub struct MetricsSafetyRules {
@@ -90,11 +91,18 @@ impl TSafetyRules for MetricsSafetyRules {
         result
     }
 
-    fn sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures, verifier: &ValidatorVerifier) -> Result<Ed25519Signature, Error> {
-        let mut result = monitor!("safety_rules", self.inner.sign_commit_proposal(ledger_info, verifier));
+    fn sign_commit_vote(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+        verifier: &ValidatorVerifier,
+    ) -> Result<Ed25519Signature, Error> {
+        let mut result = monitor!(
+            "safety_rules",
+            self.inner.sign_commit_vote(ledger_info, verifier)
+        );
         if let Err(Error::NotInitialized(_res)) = result {
             // panic here
-            unimplemented!("Initialize when signing commit proposals.")
+            unimplemented!("Initialize when signing commit votes.")
         }
         result
     }

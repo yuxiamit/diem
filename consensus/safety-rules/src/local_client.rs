@@ -8,10 +8,11 @@ use consensus_types::{
 };
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_infallible::RwLock;
-use diem_types::epoch_change::EpochChangeProof;
+use diem_types::{
+    epoch_change::EpochChangeProof, ledger_info::LedgerInfoWithSignatures,
+    validator_verifier::ValidatorVerifier,
+};
 use std::sync::Arc;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::ValidatorVerifier;
 
 /// A local interface into SafetyRules. Constructed in such a way that the container / caller
 /// cannot distinguish this API from an actual client/server process without being exposed to
@@ -50,7 +51,13 @@ impl TSafetyRules for LocalClient {
         self.internal.write().sign_timeout(timeout)
     }
 
-    fn sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures, verifier: &ValidatorVerifier) -> Result<Ed25519Signature, Error> {
-        self.internal.write().sign_commit_proposal(ledger_info, verifier)
+    fn sign_commit_vote(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+        verifier: &ValidatorVerifier,
+    ) -> Result<Ed25519Signature, Error> {
+        self.internal
+            .write()
+            .sign_commit_vote(ledger_info, verifier)
     }
 }

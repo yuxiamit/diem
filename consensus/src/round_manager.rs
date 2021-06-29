@@ -26,6 +26,7 @@ use consensus_types::{
     block::Block,
     block_retrieval::{BlockRetrievalResponse, BlockRetrievalStatus},
     common::{Author, Round},
+    experimental::commit_vote::CommitVote,
     proposal_msg::ProposalMsg,
     quorum_cert::QuorumCert,
     sync_info::SyncInfo,
@@ -33,9 +34,15 @@ use consensus_types::{
     vote::Vote,
     vote_msg::VoteMsg,
 };
+use diem_crypto::ed25519::Ed25519Signature;
 use diem_infallible::{checked, Mutex};
 use diem_logger::prelude::*;
-use diem_types::{epoch_state::EpochState, validator_verifier::ValidatorVerifier, validator_verifier::VerifyError as ValidatorVerifyError};
+use diem_types::{
+    account_address::AccountAddress,
+    epoch_state::EpochState,
+    ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
+    validator_verifier::{ValidatorVerifier, VerifyError as ValidatorVerifyError},
+};
 use fail::fail_point;
 #[cfg(test)]
 use safety_rules::ConsensusState;
@@ -43,10 +50,6 @@ use safety_rules::TSafetyRules;
 use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 use termion::color::*;
-use diem_types::ledger_info::{LedgerInfoWithSignatures, LedgerInfo};
-use consensus_types::experimental::commit_proposal::CommitProposal;
-use diem_crypto::ed25519::Ed25519Signature;
-use diem_types::account_address::AccountAddress;
 
 #[derive(Serialize, Clone)]
 pub enum UnverifiedEvent {
@@ -229,7 +232,9 @@ impl RoundManager {
         }
     }
 
-    pub fn author(&self) -> Author { self.author }
+    pub fn author(&self) -> Author {
+        self.author
+    }
 
     fn create_block_retriever(&self, author: Author) -> BlockRetriever {
         BlockRetriever::new(self.network.clone(), author)
@@ -489,37 +494,54 @@ impl RoundManager {
         bail!("Round {} timeout, broadcast to all peers", round);
     }
 
-    pub fn verify_signature(&mut self, author: AccountAddress, ledger_info: &LedgerInfo, signature: &Ed25519Signature) -> Result<(), ValidatorVerifyError> {
-        self.epoch_state.verifier.verify(author, ledger_info, signature)
-    }
-
-    pub fn verify_signature_tree(&mut self, ledger_info: &LedgerInfoWithSignatures) -> Result<(), ValidatorVerifyError> {
+    pub fn verify_signature(
+        &mut self,
+        author: AccountAddress,
+        ledger_info: &LedgerInfo,
+        signature: &Ed25519Signature,
+    ) -> Result<(), ValidatorVerifyError> {
         self.epoch_state
             .verifier
-            .verify_aggregated_struct_signature(
-                ledger_info.ledger_info(),
-                ledger_info.signatures()
-            )
+            .verify(author, ledger_info, signature)
     }
 
-    pub fn sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures) -> Ed25519Signature {
+    pub fn verify_signature_tree(
+        &mut self,
+        ledger_info: &LedgerInfoWithSignatures,
+    ) -> Result<(), ValidatorVerifyError> {
+        self.epoch_state
+            .verifier
+            .verify_aggregated_struct_signature(ledger_info.ledger_info(), ledger_info.signatures())
+    }
+
+    pub fn sign_commit_proposal(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+    ) -> Ed25519Signature {
         self.safety_rules
             .lock()
-            .sign_commit_proposal(ledger_info.clone(), &self.epoch_state.verifier).unwrap()
+            .sign_commit_vote(ledger_info.clone(), &self.epoch_state.verifier)
+            .unwrap()
     }
 
-    pub fn generate_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures) -> anyhow::Result<ConsensusMsg> {
+    pub fn generate_commit_proposal(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+    ) -> anyhow::Result<ConsensusMsg> {
         let signature = self.sign_commit_proposal(ledger_info.clone());
-        Ok(ConsensusMsg::CommitProposalMsg(Box::new(
-            CommitProposal::new_with_signature(
+        Ok(ConsensusMsg::CommitVoteMsg(Box::new(
+            CommitVote::new_with_signature(
                 self.author,
                 ledger_info.ledger_info().clone(),
                 signature,
-            )
+            ),
         )))
     }
 
-    pub async fn broadcast_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures) -> anyhow::Result<()> {
+    pub async fn broadcast_commit_proposal(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+    ) -> anyhow::Result<()> {
         let msg = self.generate_commit_proposal(ledger_info).unwrap();
         self.network.broadcast(msg).await;
         Ok(())
@@ -529,7 +551,6 @@ impl RoundManager {
         self.network.broadcast(msg); //.await // we do not have to wait for broadcasting commit decision
         Ok(())
     }
-
 
     /// This function is called only after all the dependencies of the given QC have been retrieved.
     async fn process_certificates(&mut self) -> anyhow::Result<()> {
@@ -818,7 +839,9 @@ impl RoundManager {
         self.safety_rules = safety_rules
     }
 
-    pub fn safety_rules(&self) -> &Arc<Mutex<MetricsSafetyRules>> { &self.safety_rules }
+    pub fn safety_rules(&self) -> &Arc<Mutex<MetricsSafetyRules>> {
+        &self.safety_rules
+    }
 
     pub fn epoch_state(&self) -> &EpochState {
         &self.epoch_state

@@ -28,13 +28,15 @@ use diem_crypto::{
 };
 use diem_logger::prelude::*;
 use diem_types::{
-    block_info::BlockInfo, epoch_change::EpochChangeProof, epoch_state::EpochState,
-    ledger_info::LedgerInfo, waypoint::Waypoint,
+    block_info::BlockInfo,
+    epoch_change::EpochChangeProof,
+    epoch_state::EpochState,
+    ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
+    validator_verifier::ValidatorVerifier,
+    waypoint::Waypoint,
 };
 use serde::Serialize;
 use std::cmp::Ordering;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::ValidatorVerifier;
 
 /// @TODO consider a cache of verified QCs to cut down on verification costs
 pub struct SafetyRules {
@@ -442,18 +444,22 @@ impl SafetyRules {
         Ok(signature)
     }
 
-    fn guarded_sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures, verifier: &ValidatorVerifier) -> Result<Ed25519Signature, Error> {
+    fn guarded_sign_commit_vote(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+        verifier: &ValidatorVerifier,
+    ) -> Result<Ed25519Signature, Error> {
         self.signer()?;
 
         // Verify that ledger_info contains at least 2f + 1 dostinct signatures
-        match verifier.verify_aggregated_struct_signature(ledger_info.ledger_info(), ledger_info.signatures()) {
-            Ok(_) => {},
+        match verifier
+            .verify_aggregated_struct_signature(ledger_info.ledger_info(), ledger_info.signatures())
+        {
+            Ok(_) => {}
             Err(error) => {
                 // TODO: Panic here
-                return Err(Error::InvalidQuorumCertificate(
-                    error.to_string()
-                ))
-            },
+                return Err(Error::InvalidQuorumCertificate(error.to_string()));
+            }
         };
 
         //let mut safety_data = self.persistent_storage.safety_data()?;
@@ -465,7 +471,6 @@ impl SafetyRules {
 
         Ok(signature)
     }
-
 }
 
 impl TSafetyRules for SafetyRules {
@@ -499,8 +504,12 @@ impl TSafetyRules for SafetyRules {
         run_and_log(cb, |log| log.round(timeout.round()), LogEntry::SignTimeout)
     }
 
-    fn sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures, verifier: &ValidatorVerifier) -> Result<Ed25519Signature, Error> {
-        let cb = || self.guarded_sign_commit_proposal(ledger_info, verifier);
+    fn sign_commit_vote(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+        verifier: &ValidatorVerifier,
+    ) -> Result<Ed25519Signature, Error> {
+        let cb = || self.guarded_sign_commit_vote(ledger_info, verifier);
         run_and_log(cb, |log| log, LogEntry::SignCommitProposal)
     }
 }

@@ -3,10 +3,9 @@
 
 use crate::common::Round;
 use anyhow::Context;
-use std::fmt::{Debug, Display, Formatter};
+use diem_types::{ledger_info::LedgerInfoWithSignatures, validator_verifier::ValidatorVerifier};
 use serde::{Deserialize, Serialize};
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::ValidatorVerifier;
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitDecision {
@@ -23,27 +22,23 @@ impl Debug for CommitDecision {
 
 impl Display for CommitDecision {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "CommitDecision: [{}]",
-            self.ledger_info
-        )
+        write!(f, "CommitDecision: [{}]", self.ledger_info)
     }
 }
 
 impl CommitDecision {
     /// Generates a new CommitDecision
-    pub fn new(
-        ledger_info: LedgerInfoWithSignatures,
-    ) -> Self {
-        Self {
-            ledger_info
-        }
+    pub fn new(ledger_info: LedgerInfoWithSignatures) -> Self {
+        Self { ledger_info }
     }
 
-    pub fn round(&self) -> Round { self.ledger_info.ledger_info().round() }
+    pub fn round(&self) -> Round {
+        self.ledger_info.ledger_info().round()
+    }
 
-    pub fn epoch(&self) -> u64 { self.ledger_info.ledger_info().epoch() }
+    pub fn epoch(&self) -> u64 {
+        self.ledger_info.ledger_info().epoch()
+    }
 
     /// Return the LedgerInfo associated with this commit proposal
     pub fn ledger_info(&self) -> &LedgerInfoWithSignatures {
@@ -55,12 +50,8 @@ impl CommitDecision {
     pub fn verify(&self, validator: &ValidatorVerifier) -> anyhow::Result<()> {
         // We do not need to check the author because as long as the signature tree
         // is valid, the message should be valid.
-        validator
-            .verify_aggregated_struct_signature(
-                self.ledger_info.ledger_info(),
-                self.ledger_info.signatures(),
-            ).context("Failed to verify Commit Decision")?;
-
-        Ok(())
+        self.ledger_info
+            .verify_signatures(validator)
+            .context("Failed to verify Commit Decision")
     }
 }

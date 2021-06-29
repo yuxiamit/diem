@@ -1,12 +1,12 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::experimental::commit_phase::CommitPhaseChannelMsgWrapper;
 use crate::{
     counters,
     epoch_manager::EpochManager,
     experimental::{
-        commit_phase::CommitPhase, execution_phase::ExecutionPhase,
+        commit_phase::{CommitPhase, CommitPhaseChannelMsgWrapper},
+        execution_phase::ExecutionPhase,
         ordering_state_computer::OrderingStateComputer,
     },
     network::NetworkTask,
@@ -23,8 +23,7 @@ use diem_config::config::NodeConfig;
 use diem_logger::prelude::*;
 use diem_mempool::ConsensusRequest;
 use diem_metrics::IntGauge;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::on_chain_config::OnChainConfigPayload;
+use diem_types::{ledger_info::LedgerInfoWithSignatures, on_chain_config::OnChainConfigPayload};
 use execution_correctness::ExecutionCorrectnessManager;
 use futures::channel::mpsc;
 use state_sync::client::StateSyncClient;

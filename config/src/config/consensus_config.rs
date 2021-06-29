@@ -44,7 +44,7 @@ impl Default for ConsensusConfig {
             safety_rules: SafetyRulesConfig::default(),
             sync_only: false,
             mempool_poll_count: 1,
-            decoupled: false,  // Work in progress. Do not turn it on.
+            decoupled: false, // Work in progress. Do not turn it on.
             channel_size: 30,
         }
     }

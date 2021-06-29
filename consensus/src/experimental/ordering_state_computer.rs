@@ -3,14 +3,14 @@
 
 use crate::{error::StateSyncError, state_replication::StateComputer};
 use anyhow::Result;
+use channel::Sender;
 use consensus_types::{block::Block, executed_block::ExecutedBlock};
-use diem_crypto::{HashValue, hash::ACCUMULATOR_PLACEHOLDER_HASH};
+use diem_crypto::{hash::ACCUMULATOR_PLACEHOLDER_HASH, HashValue};
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::{Error as ExecutionError, StateComputeResult};
 use fail::fail_point;
-use std::{boxed::Box, sync::Arc};
-use channel::Sender;
 use futures::SinkExt;
+use std::{boxed::Box, sync::Arc};
 
 /// Ordering-only execution proxy. Pours every blocks into the execution phase.
 /// implements StateComputer traits.
@@ -20,12 +20,8 @@ pub struct OrderingStateComputer {
 }
 
 impl OrderingStateComputer {
-    pub fn new(
-        executor_channel: Sender<(Vec<Block>, LedgerInfoWithSignatures)>,
-    ) -> Self {
-        Self {
-            executor_channel,
-        }
+    pub fn new(executor_channel: Sender<(Vec<Block>, LedgerInfoWithSignatures)>) -> Self {
+        Self { executor_channel }
     }
 }
 
@@ -59,15 +55,14 @@ impl StateComputer for OrderingStateComputer {
         blocks: &[Arc<ExecutedBlock>],
         finality_proof: LedgerInfoWithSignatures,
     ) -> Result<(), ExecutionError> {
+        let ordered_block = blocks.iter().map(|b| b.block().clone()).collect();
 
-        let ordered_block = blocks.iter()
-            .map(|b| b.block().clone()).collect();
-
-        self.executor_channel.clone()
+        self.executor_channel
+            .clone()
             .send((ordered_block, finality_proof))
             .await
             .map_err(|e| ExecutionError::InternalError {
-                error: e.to_string()
+                error: e.to_string(),
             })?;
         Ok(())
     }

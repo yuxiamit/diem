@@ -8,11 +8,12 @@ use consensus_types::{
 };
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_infallible::RwLock;
-use diem_types::epoch_change::EpochChangeProof;
+use diem_types::{
+    epoch_change::EpochChangeProof, ledger_info::LedgerInfoWithSignatures,
+    validator_verifier::ValidatorVerifier,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::ValidatorVerifier;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SafetyRulesInput {
@@ -21,7 +22,7 @@ pub enum SafetyRulesInput {
     ConstructAndSignVote(Box<MaybeSignedVoteProposal>),
     SignProposal(Box<BlockData>),
     SignTimeout(Box<Timeout>),
-    SignCommitProposal(Box<LedgerInfoWithSignatures>, Box<ValidatorVerifier>),
+    SignCommitVote(Box<LedgerInfoWithSignatures>, Box<ValidatorVerifier>),
 }
 
 pub struct SerializerService {
@@ -48,8 +49,8 @@ impl SerializerService {
             SafetyRulesInput::SignTimeout(timeout) => {
                 bcs::to_bytes(&self.internal.sign_timeout(&timeout))
             }
-            SafetyRulesInput::SignCommitProposal(ledger_info, verifier) => {
-                bcs::to_bytes(&self.internal.sign_commit_proposal(*ledger_info, &verifier))
+            SafetyRulesInput::SignCommitVote(ledger_info, verifier) => {
+                bcs::to_bytes(&self.internal.sign_commit_vote(*ledger_info, &verifier))
             }
         };
 
@@ -112,9 +113,16 @@ impl TSafetyRules for SerializerClient {
         bcs::from_bytes(&response)?
     }
 
-    fn sign_commit_proposal(&mut self, ledger_info: LedgerInfoWithSignatures, verifier: &ValidatorVerifier) -> Result<Ed25519Signature, Error> {
+    fn sign_commit_vote(
+        &mut self,
+        ledger_info: LedgerInfoWithSignatures,
+        verifier: &ValidatorVerifier,
+    ) -> Result<Ed25519Signature, Error> {
         let _timer = counters::start_timer("external", LogEntry::SignCommitProposal.as_str());
-        let response = self.request(SafetyRulesInput::SignCommitProposal(Box::new(ledger_info.clone()), Box::new(verifier.clone())))?;
+        let response = self.request(SafetyRulesInput::SignCommitVote(
+            Box::new(ledger_info.clone()),
+            Box::new(verifier.clone()),
+        ))?;
         bcs::from_bytes(&response)?
     }
 }

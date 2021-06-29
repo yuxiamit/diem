@@ -1,31 +1,35 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::{
+    metrics_safety_rules::MetricsSafetyRules, network_interface::ConsensusMsg,
+    round_manager::RoundManager, state_computer::ExecutionProxy, state_replication::StateComputer,
+};
 use channel::Receiver;
+use consensus_types::{
+    common::Author,
+    executed_block::ExecutedBlock,
+    experimental::{commit_decision::CommitDecision, commit_vote::CommitVote},
+};
+use diem_crypto::{ed25519::Ed25519Signature, HashValue};
 use diem_infallible::Mutex;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use consensus_types::executed_block::ExecutedBlock;
-use futures::{select, StreamExt, SinkExt};
-use std::collections::{HashMap, BTreeMap, VecDeque};
-use diem_crypto::HashValue;
-use crate::state_replication::StateComputer;
-use consensus_types::experimental::commit_proposal::CommitProposal;
-use consensus_types::experimental::commit_decision::CommitDecision;
-use diem_types::account_address::AccountAddress;
-use diem_crypto::ed25519::Ed25519Signature;
-use crate::state_computer::ExecutionProxy;
-use std::sync::Arc;
-use crate::round_manager::RoundManager;
-use diem_types::validator_verifier::{ValidatorVerifier, VerifyError as ValidatorVerifyError};
-use crate::metrics_safety_rules::MetricsSafetyRules;
-use consensus_types::common::Author;
-use safety_rules::TSafetyRules;
 use diem_logger::prelude::*;
-use crate::network_interface::ConsensusMsg;
 use diem_metrics::{monitor, IntGauge};
-use std::collections::hash_map::Entry;
-use tokio::runtime::{self, Runtime};
-use tokio::sync::Mutex as AsyncMutex;
+use diem_types::{
+    account_address::AccountAddress,
+    ledger_info::LedgerInfoWithSignatures,
+    validator_verifier::{ValidatorVerifier, VerifyError as ValidatorVerifyError},
+};
+use futures::{select, SinkExt, StreamExt};
+use safety_rules::TSafetyRules;
+use std::{
+    collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
+    sync::Arc,
+};
+use tokio::{
+    runtime::{self, Runtime},
+    sync::Mutex as AsyncMutex,
+};
 
 #[derive(Clone)]
 struct CacheItem {
@@ -34,10 +38,7 @@ struct CacheItem {
 }
 
 impl CacheItem {
-    pub fn new(
-        vecblocks: Vec<ExecutedBlock>,
-        ledger_info_sig: LedgerInfoWithSignatures,
-    ) -> Self {
+    pub fn new(vecblocks: Vec<ExecutedBlock>, ledger_info_sig: LedgerInfoWithSignatures) -> Self {
         Self {
             vecblocks,
             ledger_info_sig,
@@ -47,7 +48,7 @@ impl CacheItem {
 
 #[derive(Debug)]
 pub enum CommitPhaseChannelMsgWrapper {
-    CommitProposal(LedgerInfoWithSignatures),
+    CommitVote(LedgerInfoWithSignatures),
     CommitDecision(LedgerInfoWithSignatures),
 }
 
@@ -78,7 +79,9 @@ impl CommitPhase {
             commit_channel_recv,
             execution_proxy,
             local_cache: AsyncMutex::new(HashMap::<HashValue, CacheItem>::new()),
-            local_signed_cache: AsyncMutex::new(HashMap::<HashValue, LedgerInfoWithSignatures>::new()),
+            local_signed_cache: AsyncMutex::new(
+                HashMap::<HashValue, LedgerInfoWithSignatures>::new(),
+            ),
             local_queue: AsyncMutex::new(VecDeque::<CacheItem>::new()),
             commit_msg_sender,
             commit_msg_receiver,
@@ -89,15 +92,13 @@ impl CommitPhase {
     }
 
     /// Notified when receiving a commit proposal message
-    pub async fn process_commit_proposal(&mut self, commit_proposal: &CommitProposal) {
+    pub async fn process_commit_proposal(&mut self, commit_proposal: &CommitVote) {
         // verify the signature
         let li = commit_proposal.ledger_info();
-        match self.verifier
-            .verify(
-                commit_proposal.author(),
-                li,
-                commit_proposal.signature()
-            ) {
+        match self
+            .verifier
+            .verify(commit_proposal.author(), li, commit_proposal.signature())
+        {
             Ok(_) => {
                 // TODO: should we change chash to li.commit_info.executed_state_id?
                 let chash = li.consensus_data_hash();
@@ -112,8 +113,14 @@ impl CommitPhase {
                             Entry::Occupied(mut cio) => {
                                 let (verification, li_copy) = {
                                     let ci = cio.get_mut();
-                                    ci.ledger_info_sig.add_signature(commit_proposal.author(), commit_proposal.signature().clone());
-                                    (self.verify_signature_tree(&ci.ledger_info_sig), ci.ledger_info_sig.clone())
+                                    ci.ledger_info_sig.add_signature(
+                                        commit_proposal.author(),
+                                        commit_proposal.signature().clone(),
+                                    );
+                                    (
+                                        self.verify_signature_tree(&ci.ledger_info_sig),
+                                        ci.ledger_info_sig.clone(),
+                                    )
                                 };
                                 match verification {
                                     Ok(_) => {
@@ -130,19 +137,26 @@ impl CommitPhase {
                                     Vec::<ExecutedBlock>::new(),
                                     LedgerInfoWithSignatures::new(
                                         li.clone(),
-                                        BTreeMap::<AccountAddress, Ed25519Signature>::new()
-                                    )
+                                        BTreeMap::<AccountAddress, Ed25519Signature>::new(),
+                                    ),
                                 );
-                                let signature =
-                                    {
-                                        self.safety_rules.lock()
-                                        .sign_commit_proposal(ci.ledger_info_sig.clone(), &self.verifier)
+                                let signature = {
+                                    self.safety_rules
+                                        .lock()
+                                        .sign_commit_vote(
+                                            ci.ledger_info_sig.clone(),
+                                            &self.verifier,
+                                        )
                                         .unwrap()
-                                    };
+                                };
                                 ci.ledger_info_sig.add_signature(self.author, signature);
-                                ci.ledger_info_sig.add_signature(commit_proposal.author(), commit_proposal.signature().clone());
+                                ci.ledger_info_sig.add_signature(
+                                    commit_proposal.author(),
+                                    commit_proposal.signature().clone(),
+                                );
                                 if self.verify_signature_tree(&ci.ledger_info_sig).is_ok() {
-                                    locked_local_signed_cache.insert(chash, ci.ledger_info_sig.clone());
+                                    locked_local_signed_cache
+                                        .insert(chash, ci.ledger_info_sig.clone());
                                 } else {
                                     locked_local_cache.insert(chash, ci.clone());
                                 }
@@ -158,12 +172,12 @@ impl CommitPhase {
         }
     }
 
-    pub fn verify_signature_tree(&self, ledger_info: &LedgerInfoWithSignatures) -> Result<(), ValidatorVerifyError> {
+    pub fn verify_signature_tree(
+        &self,
+        ledger_info: &LedgerInfoWithSignatures,
+    ) -> Result<(), ValidatorVerifyError> {
         self.verifier
-            .verify_aggregated_struct_signature(
-                ledger_info.ledger_info(),
-                ledger_info.signatures()
-            )
+            .verify_aggregated_struct_signature(ledger_info.ledger_info(), ledger_info.signatures())
     }
 
     pub async fn process_commit_decision(&self, commit_decision: CommitDecision) {
@@ -171,7 +185,7 @@ impl CommitPhase {
         let chash = li.ledger_info().consensus_data_hash();
         let locked_local_signed_cache = &mut *self.local_signed_cache.lock().await;
         if locked_local_signed_cache.contains_key(&chash) {
-            return // ignore the message
+            return; // ignore the message
         }
         match self.verify_signature_tree(commit_decision.ledger_info()) {
             Ok(_) => {
@@ -184,18 +198,18 @@ impl CommitPhase {
         };
     }
 
-    pub fn commit(&self, vecblock: Vec<ExecutedBlock>, ledger_info: LedgerInfoWithSignatures){
+    pub fn commit(&self, vecblock: Vec<ExecutedBlock>, ledger_info: LedgerInfoWithSignatures) {
         // have to maintain the order.
         self.execution_proxy.commit(
-            &vecblock.into_iter()
-                .map(|eb|Arc::new(eb))
+            &vecblock
+                .into_iter()
+                .map(|eb| Arc::new(eb))
                 .collect::<Vec<Arc<ExecutedBlock>>>(),
             ledger_info,
         );
     }
 
-
-    pub async fn start(mut self){
+    pub async fn start(mut self) {
         loop {
             select! {
                 (vecblock, ledger_info) = self.commit_channel_recv.select_next_some() => {
