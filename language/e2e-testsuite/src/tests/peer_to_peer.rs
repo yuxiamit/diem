@@ -14,6 +14,124 @@ use language_e2e_tests::{
     versioning::CURRENT_RELEASE_VERSIONS,
 };
 use std::{convert::TryFrom, time::Instant};
+use rand::Rng;
+
+struct Zipfian {
+    n: u64,
+    theta: f64,
+    denom: f64,
+    zeta_2_theta: f64,
+}
+
+impl Zipfian {
+    pub fn new(n: u64, theta: f64) -> Self {
+        assert_ne!(theta, 1f64);
+        let denom = Self::calculate_denom(n, theta);
+        let zeta_2_theta = Self::zeta(2, theta);
+        Self {
+            n, theta, denom, zeta_2_theta
+        }
+    }
+
+    pub fn theta(&self) -> f64 { self.theta }
+
+    pub fn calculate_denom(n: u64, theta: f64) -> f64 {
+        Self::zeta(n, theta)
+    }
+
+    pub fn zeta(n: u64, theta: f64) -> f64 {
+        let mut sum = 0f64;
+        for i in 1..=n {
+            sum += (1.0f64/i as f64).powf(theta)
+        }
+        sum
+    }
+}
+
+pub trait Distribution {
+    fn sample(&self) -> u64;
+    fn sample_usize(&self) -> usize {
+        self.sample() as usize
+    }
+    fn describe(&self) -> String;
+}
+
+impl Distribution for Zipfian {
+    fn sample(&self) -> u64 {
+        let mut rng = rand::thread_rng();
+        let alpha = 1f64/(1f64 - self.theta);
+        let zeta_n = self.denom;
+        let eta = (1f64 - (2.0f64 / self.n as f64).powf(1f64 - self.theta)) / (1f64 - self.zeta_2_theta / zeta_n);
+        let u = rng.gen::<f64>();
+        let uz = u * zeta_n;
+        if uz < 1f64 { return 0 }
+        if uz < 1f64 + 0.5f64.powf(self.theta) {return 1}
+        let result = ((self.n - 1) as f64 * (eta*u -eta + 1f64).powf(alpha)).round() as u64;
+        assert!(result < self.n);
+        result
+    }
+
+    fn describe(&self) -> String {
+        format!("Zipfian w/ theta {}", self.theta())
+    }
+}
+
+#[test]
+fn benchmark_zipfian() {
+    let n = 1_000usize;
+    let theta = 0.8;
+    let zipf = Zipfian::new(n as u64, theta);
+    let block_count = 10u64;
+    let block_length: u64 = 100u64; // 1_000u64;
+    becnhmark_with_distribution(block_count, block_length, n, Box::new(zipf));
+}
+
+fn becnhmark_with_distribution(block_count: u64, block_length: u64, n: usize, dist: Box<dyn Distribution>) {
+    // Turn this on after the parallel executor is landed.
+    /*
+        let mut executor = FakeExecutor::from_fresh_genesis();
+        let account_size = n;
+        let initial_balance = 1_000_000u64;
+        let initial_seq_num = 0u64;
+        let accounts = executor.create_accounts(account_size, initial_balance, initial_seq_num);
+        let mut seq_num_array = vec![0u64; n];
+
+        // set up the transactions
+        let transfer_amount = 1_000;
+        let mut execution_time = 0f64;
+        for _i in 0..block_count {
+            let mut txns = vec![];
+            let mut txns_info = vec![];
+            for _j in 0..block_length {
+                let sender_id = dist.sample_usize();
+                let receiver_id = dist.sample_usize();
+                let sender = &accounts[sender_id];
+                let receiver = &accounts[receiver_id];
+                let seq_num = seq_num_array[sender_id];
+                seq_num_array[sender_id] += 1;
+                let txn = peer_to_peer_txn(sender, receiver, seq_num, transfer_amount);
+                txns.push(txn);
+                txns_info.push(TxnInfo::new(sender, receiver, transfer_amount));
+            }
+
+            // execute transaction
+            let now = Instant::now();
+            let output = executor.execute_block(txns).unwrap();
+            println!("txn output {:?}", output.clone());
+            execution_time += now.elapsed().as_secs_f64();
+            for txn_output in &output {
+                assert_eq!(
+                    txn_output.status(),
+                    &TransactionStatus::Keep(KeptVMStatus::Executed)
+                );
+            }
+            check_and_apply_transfer_output(&mut executor, &txns_info, &output);
+        }
+        let throughput = (block_count * block_length) as f64 / execution_time;
+        println!("Zipfian Benchmark:\nThroughput: {}, Execution Time: {}, dist: {}", throughput, execution_time, dist.describe());
+    */
+}
+
 
 #[test]
 fn single_peer_to_peer_with_event() {
