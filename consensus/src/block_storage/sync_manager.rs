@@ -42,16 +42,20 @@ impl BlockStore {
     /// Check if we're far away from this ledger info and need to sync.
     /// Returns false if we have this block in the tree or the root's round is higher than the
     /// block.
-    pub fn need_sync_for_quorum_cert(&self, qc: &QuorumCert) -> bool {
+    pub fn need_sync_for_quorum_cert(
+        &self,
+        qc: &QuorumCert,
+        li: &LedgerInfoWithSignatures,
+    ) -> bool {
         // This precondition ensures that the check in the following lines
         // does not result in an addition overflow.
-        checked_precondition!(self.ordered_root().round() < std::u64::MAX - 1);
+        checked_precondition!(self.commit_root().round() < std::u64::MAX - 1);
 
         // If we have the block locally, we're not far from this QC thus don't need to sync.
         // In case root().round() is greater than that the committed
         // block carried by LI is older than my current commit.
         !(self.block_exists(qc.commit_info().id())
-            || self.ordered_root().round() >= qc.commit_info().round())
+            || self.commit_root().round() >= li.commit_info().round())
     }
 
     /// Checks if quorum certificate can be inserted in block store without RPC
@@ -171,12 +175,12 @@ impl BlockStore {
         highest_ledger_info: LedgerInfoWithSignatures,
         retriever: &mut BlockRetriever,
     ) -> anyhow::Result<()> {
-        if !self.need_sync_for_quorum_cert(&highest_ordered_cert) {
+        if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info) {
             return Ok(());
         }
         let (root, root_metadata, blocks, quorum_certs) = Self::fast_forward_sync(
             &highest_ordered_cert,
-            highest_ledger_info,
+            highest_ledger_info.clone(),
             retriever,
             self.storage.clone(),
             self.state_computer.clone(),
@@ -191,11 +195,11 @@ impl BlockStore {
         self.rebuild(root, root_metadata, blocks, quorum_certs)
             .await;
 
-        if highest_ordered_cert.ends_epoch() {
+        if highest_ledger_info.ledger_info().ends_epoch() {
             retriever
                 .network
                 .notify_epoch_change(EpochChangeProof::new(
-                    vec![highest_ordered_cert.ledger_info().clone()],
+                    vec![highest_ledger_info],
                     /* more = */ false,
                 ))
                 .await;
@@ -295,6 +299,7 @@ impl BlockRetriever {
         peers: &mut Vec<&AccountAddress>,
         num_blocks: u64,
     ) -> anyhow::Result<Vec<Block>> {
+        //info!("Retrieving {} blocks starting from {}", num_blocks, block_id);
         let mut attempt = 0_u32;
         let mut progress = 0;
         let mut last_block_id = block_id;
@@ -361,6 +366,7 @@ impl BlockRetriever {
             }
         }
         assert_eq!(result_blocks.len() as u64, num_blocks);
+        //info!("fetched blocks {:?}", result_blocks.iter().map(|b| b.id()).collect::<Vec<HashValue>>());
         Ok(result_blocks)
     }
 

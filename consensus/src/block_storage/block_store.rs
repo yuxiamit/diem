@@ -140,6 +140,41 @@ pub fn update_counters_and_prune_blocks(
         .update_commit_id_and_process_pruned_blocks(block_to_commit.id(), id_to_remove);
 }
 
+pub fn execute_block_with_state_computer(
+    block: Block,
+    state_computer: &Arc<dyn StateComputer>,
+) -> anyhow::Result<ExecutedBlock, Error> {
+    // Although NIL blocks don't have a payload, we still send a T::default() to compute
+    // because we may inject a block prologue transaction.
+    let state_compute_result = state_computer.compute(&block, block.parent_id())?;
+    observe_block(block.timestamp_usecs(), BlockStage::EXECUTED);
+
+    Ok(ExecutedBlock::new(block, state_compute_result))
+}
+
+pub fn path_from_commit_root_with_block_tree(
+    block_id: HashValue,
+    block_tree: Arc<RwLock<BlockTree>>,
+) -> Option<Vec<Arc<ExecutedBlock>>> {
+    block_tree.read().path_from_commit_root(block_id)
+}
+
+pub fn recover_executor_block_tree_and_retry_execute_with_block_tree_and_state_computer(
+    parent_block_id: HashValue,
+    target_block: Block,
+    block_tree: Arc<RwLock<BlockTree>>,
+    state_computer: Arc<dyn StateComputer>,
+) -> anyhow::Result<ExecutedBlock, Error> {
+    // recover the block tree in executor
+    let blocks_to_reexecute =
+        path_from_commit_root_with_block_tree(parent_block_id, block_tree).unwrap_or_else(Vec::new);
+
+    for block in blocks_to_reexecute {
+        execute_block_with_state_computer(block.block().clone(), &state_computer)?;
+    }
+    execute_block_with_state_computer(target_block, &state_computer)
+}
+
 impl BlockStore {
     pub fn new(
         storage: Arc<dyn PersistentLivenessStorage>,
@@ -281,9 +316,12 @@ impl BlockStore {
 
         assert!(!blocks_to_commit.is_empty());
 
-        let block_tree = self.inner.clone();
+        // prepare values for callback
+        let block_tree_in_commit_callbacl = self.inner.clone();
+        let block_tree_in_execution_failure_callbacl = self.inner.clone();
         let storage = self.storage.clone();
         let commit_root = self.commit_root();
+        let state_computer = self.state_computer.clone();
 
         self.inner
             .write()
@@ -299,17 +337,33 @@ impl BlockStore {
                     move |executed_blocks: &[Arc<ExecutedBlock>],
                           commit_decision: LedgerInfoWithSignatures| {
                         // TODO: shall we merge these into a single write lock event?
-                        block_tree
+                        block_tree_in_commit_callbacl
                             .write()
                             .update_highest_ledger_info(commit_decision);
                         update_counters_and_prune_blocks(
-                            block_tree,
+                            block_tree_in_commit_callbacl,
                             storage,
                             commit_root,
                             executed_blocks,
                         );
                     },
                 ),
+                Some(Box::new(move |parent_block_id, block|{
+                    let res =
+                        recover_executor_block_tree_and_retry_execute_with_block_tree_and_state_computer(
+                            parent_block_id,
+                            block,
+                            block_tree_in_execution_failure_callbacl,
+                            state_computer,
+                        );
+                    if let Err(e) = res {
+                        // we do not need to retry again because the normal path
+                        // in block_store::execute_and_insert_block only retry once and just return
+                        // to upper level (all the way to epoch_manager) and document the error.
+                        counters::ERROR_COUNT.inc();
+                        error!(error = e.to_string(), "Retry execution attempt fails again. Giving up..");
+                    }
+                })),
             )
             .await
             .expect("Failed to persist commit");
@@ -351,6 +405,22 @@ impl BlockStore {
         self.try_commit().await;
     }
 
+    pub fn recover_executor_block_tree_and_retry_execute(
+        &self,
+        parent_block_id: HashValue,
+        target_block: Block,
+    ) -> anyhow::Result<ExecutedBlock, Error> {
+        // recover the block tree in executor
+        let blocks_to_reexecute = self
+            .path_from_ordered_root(parent_block_id)
+            .unwrap_or_else(Vec::new);
+
+        for block in blocks_to_reexecute {
+            self.execute_block(block.block().clone())?;
+        }
+        self.execute_block(target_block)
+    }
+
     /// Execute and insert a block if it passes all validation tests.
     /// Returns the Arc to the block kept in the block store after persisting it to storage
     ///
@@ -371,15 +441,7 @@ impl BlockStore {
         let executed_block = match self.execute_block(block.clone()) {
             Ok(res) => Ok(res),
             Err(Error::BlockNotFound(parent_block_id)) => {
-                // recover the block tree in executor
-                let blocks_to_reexecute = self
-                    .path_from_ordered_root(parent_block_id)
-                    .unwrap_or_else(Vec::new);
-
-                for block in blocks_to_reexecute {
-                    self.execute_block(block.block().clone())?;
-                }
-                self.execute_block(block)
+                self.recover_executor_block_tree_and_retry_execute(parent_block_id, block)
             }
             err => err,
         }?;
@@ -394,12 +456,7 @@ impl BlockStore {
     }
 
     fn execute_block(&self, block: Block) -> anyhow::Result<ExecutedBlock, Error> {
-        // Although NIL blocks don't have a payload, we still send a T::default() to compute
-        // because we may inject a block prologue transaction.
-        let state_compute_result = self.state_computer.compute(&block, block.parent_id())?;
-        observe_block(block.timestamp_usecs(), BlockStage::EXECUTED);
-
-        Ok(ExecutedBlock::new(block, state_compute_result))
+        execute_block_with_state_computer(block, &self.state_computer)
     }
 
     /// Validates quorum certificates and inserts it into block tree assuming dependencies exist.

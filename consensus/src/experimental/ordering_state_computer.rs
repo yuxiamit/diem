@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    error::StateSyncError, experimental::execution_phase::ExecutionChannelType,
+    error::StateSyncError, experimental::execution_phase::ExecutionPhaseCallBackType,
     state_replication::StateComputer,
 };
 use anyhow::Result;
@@ -16,7 +16,10 @@ use futures::SinkExt;
 use std::{boxed::Box, sync::Arc};
 
 use crate::{
-    experimental::{errors::Error, execution_phase::ResetAck},
+    experimental::{
+        errors::Error,
+        execution_phase::{ExecutionChannelType, ResetAck},
+    },
     state_replication::StateComputerCommitCallBackType,
 };
 use futures::channel::oneshot;
@@ -69,6 +72,7 @@ impl StateComputer for OrderingStateComputer {
         blocks: &[Arc<ExecutedBlock>],
         finality_proof: LedgerInfoWithSignatures,
         callback: StateComputerCommitCallBackType,
+        executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), ExecutionError> {
         assert!(!blocks.is_empty());
 
@@ -79,6 +83,7 @@ impl StateComputer for OrderingStateComputer {
             .send(ExecutionChannelType(
                 ordered_block,
                 finality_proof,
+                executor_failure_callback,
                 callback,
             ))
             .await
