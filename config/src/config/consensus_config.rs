@@ -48,8 +48,8 @@ impl Default for ConsensusConfig {
             sync_only: false,
             mempool_poll_count: 1,
             decoupled_execution: true, // by default, we turn of the decoupling execution feature
-            channel_size: 30,           // hard-coded
-            back_pressure_limit: 1,
+            channel_size: 60,          // hard-coded
+            back_pressure_limit: 10,
         }
     }
 }

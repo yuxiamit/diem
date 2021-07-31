@@ -1,7 +1,10 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::error::{MempoolError, StateSyncError};
+use crate::{
+    error::{MempoolError, StateSyncError},
+    experimental::execution_phase::ExecutionPhaseCallBackType,
+};
 use anyhow::Result;
 use consensus_types::{block::Block, common::Payload, executed_block::ExecutedBlock};
 use diem_crypto::HashValue;
@@ -62,6 +65,7 @@ pub trait StateComputer: Send + Sync {
         blocks: &[Arc<ExecutedBlock>],
         finality_proof: LedgerInfoWithSignatures,
         callback: StateComputerCommitCallBackType,
+        executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), ExecutionError>;
 
     /// Best effort state synchronization to the given target LedgerInfo.

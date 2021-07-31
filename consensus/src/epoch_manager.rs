@@ -329,7 +329,7 @@ impl EpochManager {
         let block_store = Arc::new(BlockStore::new(
             Arc::clone(&self.storage),
             recovery_data,
-            state_computer.clone(),
+            state_computer,
             self.config.max_pruned_blocks_in_mem,
             Arc::clone(&self.time_service),
         ));
@@ -442,6 +442,7 @@ impl EpochManager {
         let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
         let mut processor = if self.config.decoupled_execution {
+            info!(epoch = epoch, "starting decoupled execution");
             let (round_manager, execution_phase, commit_phase) = self
                 .prepare_decoupled_execution(
                     epoch,
@@ -453,6 +454,8 @@ impl EpochManager {
                     network_sender,
                 )
                 .unwrap();
+
+            info!(epoch = epoch, "prepared decoupled execution");
 
             tokio::spawn(execution_phase.start());
             tokio::spawn(commit_phase.start());

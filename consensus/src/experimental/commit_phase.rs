@@ -36,7 +36,9 @@ use crate::{
     experimental::execution_phase::{reset_ack_new, ResetAck},
     state_replication::StateComputerCommitCallBackType,
 };
-use diem_logger::error;
+use anyhow::anyhow;
+
+use diem_types::epoch_change::EpochChangeProof;
 use futures::{channel::oneshot, prelude::stream::FusedStream};
 
 /*
@@ -131,6 +133,11 @@ impl PendingBlocks {
     }
 }
 
+pub enum CommitPhaseTimeoutEvent {
+    BroadcastCommitVote(CommitVote),
+    SignCommitVote(LedgerInfoWithSignatures),
+}
+
 pub struct CommitPhase {
     commit_channel_recv: Receiver<CommitChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
@@ -141,8 +148,8 @@ pub struct CommitPhase {
     author: Author,
     back_pressure: Arc<AtomicU64>,
     network_sender: NetworkSender,
-    timeout_event_tx: Sender<CommitVote>,
-    timeout_event_rx: Receiver<CommitVote>,
+    timeout_event_tx: Sender<CommitPhaseTimeoutEvent>,
+    timeout_event_rx: Receiver<CommitPhaseTimeoutEvent>,
     reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
 }
 
@@ -161,6 +168,7 @@ pub async fn commit(
             &blocks_to_commit,
             pending_blocks.ledger_info_sig().clone(),
             pending_blocks.take_callback(),
+            None,
         )
         .await
         .expect("Failed to persist commit");
@@ -177,19 +185,15 @@ macro_rules! report_err {
     };
 }
 
-/// shortcut for sendng a message with a timeout retry event
-async fn broadcast_commit_vote_with_retry(
-    mut network_sender: NetworkSender,
-    cv: CommitVote,
-    mut notification: Sender<CommitVote>,
+/// shortcut for sending a message with a timeout retry event
+async fn sleep_and_retry(
+    commit_phase_timeout_event: CommitPhaseTimeoutEvent,
+    mut notification: Sender<CommitPhaseTimeoutEvent>,
 ) {
-    network_sender
-        .broadcast(ConsensusMsg::CommitVoteMsg(Box::new(cv.clone())))
-        .await;
     time::sleep(time::Duration::from_secs(COMMIT_PHASE_TIMEOUT_SEC)).await;
     report_err!(
-        notification.send(cv).await,
-        "Error in sending timeout events"
+        notification.send(commit_phase_timeout_event).await,
+        "Error in sending timeout events to retry broacasting commit vote"
     )
 }
 
@@ -205,8 +209,8 @@ impl CommitPhase {
         network_sender: NetworkSender,
         reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
     ) -> Self {
-        let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitVote>(
-            2,
+        let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitPhaseTimeoutEvent>(
+            3,
             &counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_TIMEOUT_CHANNEL,
         );
         Self {
@@ -278,6 +282,7 @@ impl CommitPhase {
     }
 
     pub async fn check_commit(&mut self) -> anyhow::Result<()> {
+        // we cannot assume blocks is some as the previous messages are invalid
         if let Some(pending_blocks) = self.blocks.as_ref() {
             if pending_blocks.verify(&self.verifier).is_ok() {
                 // asynchronously broadcast the commit decision first to
@@ -290,6 +295,15 @@ impl CommitPhase {
 
                 let pending_blocks = self.blocks.take().unwrap();
                 let round = pending_blocks.round();
+
+                if pending_blocks.ledger_info_sig().ledger_info().ends_epoch() {
+                    self.network_sender
+                        .notify_epoch_change(EpochChangeProof::new(
+                            vec![pending_blocks.ledger_info_sig().clone()],
+                            /* more = */ false,
+                        ))
+                        .await;
+                }
 
                 commit(&self.execution_proxy, pending_blocks)
                     .await
@@ -305,50 +319,84 @@ impl CommitPhase {
         Ok(())
     }
 
+    pub async fn broadcast_with_retry(&mut self, commit_vote: CommitVote) {
+        let retry_event = CommitPhaseTimeoutEvent::BroadcastCommitVote(commit_vote.clone());
+
+        self.network_sender
+            .broadcast(ConsensusMsg::CommitVoteMsg(Box::new(commit_vote)))
+            .await;
+
+        tokio::spawn(sleep_and_retry(retry_event, self.timeout_event_tx.clone()));
+    }
+
+    pub async fn retry_sign_pending_blocks(
+        &mut self,
+        ordered_ledger_info: LedgerInfoWithSignatures,
+    ) -> anyhow::Result<()> {
+        if let Some(pending_block) = self.blocks.as_ref() {
+            if pending_block
+                .block_info()
+                .match_ordered_only(ordered_ledger_info.commit_info())
+            {
+                let commit_ledger_info = pending_block.ledger_info_sig().ledger_info();
+                let sign_result = self
+                    .safety_rules
+                    .lock()
+                    .sign_commit_vote(ordered_ledger_info.clone(), commit_ledger_info.clone());
+
+                if let Ok(signature) = sign_result {
+                    let commit_vote = CommitVote::new_with_signature(
+                        self.author,
+                        commit_ledger_info.clone(),
+                        signature,
+                    );
+
+                    // asynchronously broadcast the message.
+                    // note that this message will also reach the node itself
+                    // if the message delivery fails, it needs to resend the message, or otherwise the liveness might compromise.
+                    self.broadcast_with_retry(commit_vote).await;
+
+                    Ok(())
+                } else {
+                    tokio::spawn(sleep_and_retry(
+                        CommitPhaseTimeoutEvent::SignCommitVote(ordered_ledger_info),
+                        self.timeout_event_tx.clone(),
+                    ));
+
+                    Err(anyhow!("Safety-rule fails"))
+                }
+            } else {
+                info!("received a stale attempt (before the reset), ignoring");
+                Ok(())
+            }
+        } else {
+            info!("reset event stops a retrying signing attempt");
+            Ok(())
+        }
+    }
+
     pub async fn process_executed_blocks(
         &mut self,
         blocks: Vec<ExecutedBlock>,
         ordered_ledger_info: LedgerInfoWithSignatures,
         callback: StateComputerCommitCallBackType,
     ) -> anyhow::Result<()> {
-        // TODO: recover from the safety_rules error
-
         let commit_ledger_info = LedgerInfo::new(
             blocks.last().unwrap().block_info(),
             ordered_ledger_info.ledger_info().consensus_data_hash(),
         );
 
-        let signature = self
-            .safety_rules
-            .lock()
-            .sign_commit_vote(ordered_ledger_info, commit_ledger_info.clone())?;
-
-        let commit_vote =
-            CommitVote::new_with_signature(self.author, commit_ledger_info.clone(), signature);
-
         let commit_ledger_info_with_sig = LedgerInfoWithSignatures::new(
-            commit_ledger_info,
+            commit_ledger_info.clone(),
             BTreeMap::<AccountAddress, Ed25519Signature>::new(),
         );
 
-        // we need to wait for the commit vote itself to collect the signature.
-        //commit_ledger_info_with_sig.add_signature(self.author, signature);
-        self.set_blocks(Some(PendingBlocks::new(
-            blocks,
-            commit_ledger_info_with_sig,
-            callback,
-        )));
+        // add the block to the pending block, if not already
+        let pending_block = PendingBlocks::new(blocks, commit_ledger_info_with_sig, callback);
 
-        // asynchronously broadcast the message.
-        // note that this message will also reach the node itself
-        // if the message delivery fails, it needs to resend the message, or otherwise the liveness might compromise.
-        tokio::spawn(broadcast_commit_vote_with_retry(
-            self.network_sender.clone(),
-            commit_vote,
-            self.timeout_event_tx.clone(),
-        ));
+        self.set_blocks(Some(pending_block));
 
-        Ok(())
+        self.retry_sign_pending_blocks(ordered_ledger_info).await
     }
 
     pub fn set_blocks(&mut self, blocks_or_none: Option<PendingBlocks>) {
@@ -368,10 +416,15 @@ impl CommitPhase {
         reset_event_callback: oneshot::Sender<ResetAck>,
     ) -> anyhow::Result<()> {
         // reset the commit phase
+        info!("resetting..");
 
         // exhaust the commit channel
-        // we do not have to exhaust the commit message channel because inconsistent messages will be ignored
         while self.commit_channel_recv.next().now_or_never().is_some() {}
+
+        // we should also exhaust the message channel
+        // as the we are going to set self.blocks to be None,
+        // otherwise it might block the epoch manager
+        while self.commit_msg_rx.next().now_or_never().is_some() {}
 
         // reset local block
         self.blocks = None;
@@ -384,12 +437,39 @@ impl CommitPhase {
         Ok(())
     }
 
+    pub async fn process_retry_event(&mut self, retry_event: CommitPhaseTimeoutEvent) {
+        match retry_event {
+            CommitPhaseTimeoutEvent::BroadcastCommitVote(retry_cv) => {
+                if let Some(pending_blocks) = self.blocks.as_ref() {
+                    if pending_blocks.block_info() == retry_cv.commit_info() {
+                        // retry broadcasting the message if the blocks are still pending
+                        self.broadcast_with_retry(retry_cv).await;
+                    }
+                }
+            }
+            CommitPhaseTimeoutEvent::SignCommitVote(ordered_ledger_info) => {
+                report_err!(
+                        // receive new blocks from execution phase
+                        self.retry_sign_pending_blocks(ordered_ledger_info).await,
+                        "Error in retrying processing received blocks due to a previous safety-rule failure"
+                    );
+            }
+        }
+    }
+
     pub async fn start(mut self) {
+        info!("commit phase starts");
         loop {
+            debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
+                self.blocks.is_some(),
+                !self.commit_msg_rx.is_terminated(),
+                !self.reset_event_rx.is_terminated(),
+                !self.commit_channel_recv.is_terminated(),
+            );
             // if we are still collecting the signatures
             tokio::select! {
                 // process messages dispatched from epoch_manager
-                msg = self.commit_msg_rx.select_next_some(), if self.blocks.is_some() => {
+                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
                         match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
@@ -413,22 +493,18 @@ impl CommitPhase {
                             "Error in checking whether self.block is ready to commit."
                         );
                 }
-                retry_cv = self.timeout_event_rx.select_next_some(), if self.blocks.is_some() && !self.commit_msg_rx.is_terminated()  => {
-                    let pending_blocks = self.blocks.as_ref().unwrap();
-                    if pending_blocks.block_info() == retry_cv.commit_info() {
-                        // retry broadcasting the message if the blocks are still pending
-                        tokio::spawn(broadcast_commit_vote_with_retry(self.network_sender.clone(), retry_cv, self.timeout_event_tx.clone()));
-                    }
+                Some(retry_event) = self.timeout_event_rx.next(), if !self.commit_channel_recv.is_terminated()  => {
+                    self.process_retry_event(retry_event).await;
                 }
                 // callback event might come when self.blocks is not empty
-                reset_event_callback = self.reset_event_rx.select_next_some() => {
+                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.reset_event_rx.is_terminated() => {
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
                         })
                         .unwrap();
                 }
-                CommitChannelType(blocks, ordered_ledger_info, callback) = self.commit_channel_recv.select_next_some(),
-                    if self.blocks.is_none() => {
+                Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),
+                    if !self.commit_channel_recv.is_terminated() && self.blocks.is_none() => {
                         report_err!(
                             // receive new blocks from execution phase
                             self.process_executed_blocks(blocks, ordered_ledger_info, callback)
@@ -439,5 +515,6 @@ impl CommitPhase {
                 else => break,
             }
         }
+        info!("commit phase stops");
     }
 }
