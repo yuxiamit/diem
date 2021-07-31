@@ -24,7 +24,8 @@ use consensus_types::block::block_test_utils::certificate_for_genesis;
 
 use crate::{
     experimental::{
-        commit_phase::CommitChannelType, execution_phase::ResetAck,
+        commit_phase::CommitChannelType,
+        execution_phase::{ResetAck},
         tests::test_utils::prepare_commit_phase_with_block_store_state_computer,
     },
     state_replication::empty_state_computer_call_back,
@@ -117,8 +118,12 @@ fn decoupled_execution_integration() {
         };
 
         // it commits the block
-        if let Some(ExecutionChannelType(executed_blocks, finality_proof, callback)) =
-            commit_result_rx.next().await
+        if let Some(ExecutionChannelType(
+            executed_blocks,
+            finality_proof,
+            _execution_callback,
+            callback,
+        )) = commit_result_rx.next().await
         {
             assert_eq!(executed_blocks.len(), 3); // a1 a2 a3
             assert_eq!(

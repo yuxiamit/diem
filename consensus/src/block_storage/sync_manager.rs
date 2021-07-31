@@ -176,7 +176,7 @@ impl BlockStore {
         }
         let (root, root_metadata, blocks, quorum_certs) = Self::fast_forward_sync(
             &highest_ordered_cert,
-            highest_ledger_info,
+            highest_ledger_info.clone(),
             retriever,
             self.storage.clone(),
             self.state_computer.clone(),
@@ -191,11 +191,11 @@ impl BlockStore {
         self.rebuild(root, root_metadata, blocks, quorum_certs)
             .await;
 
-        if highest_ordered_cert.ends_epoch() {
+        if highest_ledger_info.ledger_info().ends_epoch() {
             retriever
                 .network
                 .notify_epoch_change(EpochChangeProof::new(
-                    vec![highest_ordered_cert.ledger_info().clone()],
+                    vec![highest_ledger_info],
                     /* more = */ false,
                 ))
                 .await;

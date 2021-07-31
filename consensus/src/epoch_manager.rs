@@ -442,6 +442,7 @@ impl EpochManager {
         let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
         let mut processor = if self.config.decoupled_execution {
+            info!(epoch = epoch, "starting decoupled execution");
             let (round_manager, execution_phase, commit_phase) = self
                 .prepare_decoupled_execution(
                     epoch,
@@ -453,6 +454,8 @@ impl EpochManager {
                     network_sender,
                 )
                 .unwrap();
+
+            info!(epoch = epoch, "prepared decoupled execution");
 
             tokio::spawn(execution_phase.start());
             tokio::spawn(commit_phase.start());
