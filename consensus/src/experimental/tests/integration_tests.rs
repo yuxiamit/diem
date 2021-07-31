@@ -117,8 +117,12 @@ fn decoupled_execution_integration() {
         };
 
         // it commits the block
-        if let Some(ExecutionChannelType(executed_blocks, finality_proof, callback)) =
-            commit_result_rx.next().await
+        if let Some(ExecutionChannelType(
+            executed_blocks,
+            finality_proof,
+            _execution_callback,
+            callback,
+        )) = commit_result_rx.next().await
         {
             assert_eq!(executed_blocks.len(), 3); // a1 a2 a3
             assert_eq!(

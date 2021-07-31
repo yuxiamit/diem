@@ -3,6 +3,7 @@
 
 use crate::{
     error::StateSyncError,
+    experimental::execution_phase::ExecutionPhaseCallBackType,
     state_replication::{StateComputer, StateComputerCommitCallBackType},
     test_utils::mock_storage::MockStorage,
 };
@@ -12,7 +13,7 @@ use diem_crypto::HashValue;
 use diem_infallible::Mutex;
 use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
-use executor_types::{Error, StateComputeResult};
+use executor_types::{Error as ExecutionError, StateComputeResult};
 use futures::channel::mpsc;
 use std::{collections::HashMap, sync::Arc};
 use termion::color::*;
@@ -45,7 +46,7 @@ impl StateComputer for MockStateComputer {
         &self,
         block: &Block,
         _parent_block_id: HashValue,
-    ) -> Result<StateComputeResult, Error> {
+    ) -> Result<StateComputeResult, ExecutionError> {
         self.block_cache
             .lock()
             .insert(block.id(), block.payload().unwrap_or(&vec![]).clone());
@@ -56,11 +57,12 @@ impl StateComputer for MockStateComputer {
     async fn commit(
         &self,
         blocks: &[Arc<ExecutedBlock>],
-        commit: LedgerInfoWithSignatures,
-        call_back: StateComputerCommitCallBackType,
-    ) -> Result<(), Error> {
+        finality_proof: LedgerInfoWithSignatures,
+        callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
+    ) -> Result<(), ExecutionError> {
         self.consensus_db
-            .commit_to_storage(commit.ledger_info().clone());
+            .commit_to_storage(finality_proof.ledger_info().clone());
 
         // mock sending commit notif to state sync
         let mut txns = vec![];
@@ -75,9 +77,9 @@ impl StateComputer for MockStateComputer {
         // they may fail during shutdown
         let _ = self.state_sync_client.unbounded_send(txns);
 
-        let _ = self.commit_callback.unbounded_send(commit.clone());
+        let _ = self.commit_callback.unbounded_send(finality_proof.clone());
 
-        call_back(blocks, commit);
+        callback(blocks, finality_proof);
 
         Ok(())
     }
@@ -106,16 +108,17 @@ impl StateComputer for EmptyStateComputer {
         &self,
         _block: &Block,
         _parent_block_id: HashValue,
-    ) -> Result<StateComputeResult, Error> {
+    ) -> Result<StateComputeResult, ExecutionError> {
         Ok(StateComputeResult::new_dummy())
     }
 
     async fn commit(
         &self,
         _blocks: &[Arc<ExecutedBlock>],
-        _commit: LedgerInfoWithSignatures,
-        _call_back: StateComputerCommitCallBackType,
-    ) -> Result<(), Error> {
+        _finality_proof: LedgerInfoWithSignatures,
+        _callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
+    ) -> Result<(), ExecutionError> {
         Ok(())
     }
 
@@ -146,7 +149,7 @@ impl StateComputer for RandomComputeResultStateComputer {
         &self,
         _block: &Block,
         _parent_block_id: HashValue,
-    ) -> Result<StateComputeResult, Error> {
+    ) -> Result<StateComputeResult, ExecutionError> {
         Ok(StateComputeResult::new_dummy_with_root_hash(
             self.random_compute_result_root_hash,
         ))
@@ -155,9 +158,10 @@ impl StateComputer for RandomComputeResultStateComputer {
     async fn commit(
         &self,
         _blocks: &[Arc<ExecutedBlock>],
-        _commit: LedgerInfoWithSignatures,
-        _call_back: StateComputerCommitCallBackType,
-    ) -> Result<(), Error> {
+        _finality_proof: LedgerInfoWithSignatures,
+        _callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
+    ) -> Result<(), ExecutionError> {
         Ok(())
     }
 

@@ -484,6 +484,36 @@ mod commit_phase_e2e_tests {
             assert!(commit_result_rx.next().now_or_never().is_none());
         });
     }
+
+    /*
+    // disable the drop test temporarily
+    #[test]
+    fn commit_phase_drop_test() {
+        let mut runtime = consensus_runtime();
+        let (
+            mut commit_tx,
+            mut msg_tx,
+            mut commit_phase_reset_tx,
+            _commit_result_rx,
+            _self_loop_rx,
+            _safety_rules_container,
+            _signers,
+            _state_computer,
+            _validator,
+            commit_phase,
+            _block_store,
+        ) = prepare_commit_phase(&runtime);
+
+        let handle = runtime.spawn(commit_phase.start());
+
+        timed_block_on(&mut runtime, async move {
+            commit_tx.close().await.ok();
+            msg_tx.close().await.ok();
+            commit_phase_reset_tx.close().await.ok();
+            handle.await.ok(); // it should detach
+        });
+    }
+    */
 }
 
 mod commit_phase_function_tests {

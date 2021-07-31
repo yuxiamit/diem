@@ -419,6 +419,7 @@ impl RoundManager {
                     );
                     VerifyError::from(e)
                 })?;
+            debug!("Sync Info passed verification");
             let result = self
                 .block_store
                 .add_certs(&sync_info, self.create_block_retriever(author))
