@@ -51,6 +51,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+//use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
 /// RoundManager is used for normal event handling.
@@ -329,7 +330,7 @@ impl EpochManager {
         let block_store = Arc::new(BlockStore::new(
             Arc::clone(&self.storage),
             recovery_data,
-            state_computer.clone(),
+            state_computer,
             self.config.max_pruned_blocks_in_mem,
             Arc::clone(&self.time_service),
         ));
@@ -442,6 +443,7 @@ impl EpochManager {
         let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
         let mut processor = if self.config.decoupled_execution {
+            info!(epoch = epoch, "starting decoupled execution");
             let (round_manager, execution_phase, commit_phase) = self
                 .prepare_decoupled_execution(
                     epoch,
@@ -453,6 +455,8 @@ impl EpochManager {
                     network_sender,
                 )
                 .unwrap();
+
+            info!(epoch = epoch, "prepared decoupled execution");
 
             tokio::spawn(execution_phase.start());
             tokio::spawn(commit_phase.start());
@@ -536,6 +540,15 @@ impl EpochManager {
             verifier: (&validator_set).into(),
         };
 
+        /*
+        // update decoupled-execution configs, if there is any
+        if let Ok(decoupled_execution_config) = payload.get::<OnChainConsensusConfig>() {
+            self.config.back_pressure_limit = decoupled_execution_config.inner.back_pressure_limit;
+            self.config.decoupled_execution = decoupled_execution_config.inner.decoupled_execution;
+            self.config.channel_size = decoupled_execution_config.inner.channel_size;
+        }
+        */
+
         match self.storage.start() {
             LivenessStorageData::RecoveryData(initial_data) => {
                 self.start_round_manager(initial_data, epoch_state).await
@@ -588,10 +601,13 @@ impl EpochManager {
             | ConsensusMsg::VoteMsg(_)
             | ConsensusMsg::CommitVoteMsg(_)
             | ConsensusMsg::CommitDecisionMsg(_) => {
-                let event: UnverifiedEvent = msg.into();
+                let event: UnverifiedEvent = msg.clone().into();
                 if event.epoch() == self.epoch() {
                     return Ok(Some(event));
-                } else {
+                } else if !matches!(
+                    msg,
+                    ConsensusMsg::CommitVoteMsg(_) | ConsensusMsg::CommitDecisionMsg(_)
+                ) {
                     monitor!(
                         "process_different_epoch_consensus_msg",
                         self.process_different_epoch(event.epoch(), peer_id).await?
@@ -644,8 +660,10 @@ impl EpochManager {
                     VerifiedEvent::ProposalMsg(proposal) => p.process_proposal_msg(*proposal).await,
                     VerifiedEvent::VoteMsg(vote) => p.process_vote_msg(*vote).await,
                     VerifiedEvent::SyncInfo(sync_info) => p.sync_up(&sync_info, peer_id).await,
-                    _ => {
-                        unimplemented!()
+                    VerifiedEvent::CommitVote(_) | VerifiedEvent::CommitDecision(_) => {
+                        return Err(anyhow!(
+                            "Ignoring commit vote/decision message during recovery"
+                        )); //ignore
                     }
                 }?;
                 let epoch_state = p.epoch_state().clone();

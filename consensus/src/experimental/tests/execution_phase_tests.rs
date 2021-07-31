@@ -10,7 +10,9 @@ use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
 use crate::{
     experimental::{
         commit_phase::CommitChannelType,
-        execution_phase::{reset_ack_new, ExecutionChannelType, ResetAck},
+        execution_phase::{
+            empty_execute_phase_callback, reset_ack_new, ExecutionChannelType, ResetAck,
+        },
     },
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, RandomComputeResultStateComputer},
@@ -109,6 +111,7 @@ fn test_execution_phase_e2e() {
             .send(ExecutionChannelType(
                 blocks,
                 li_sig.clone(),
+                empty_execute_phase_callback(),
                 empty_state_computer_call_back(),
             ))
             .await
@@ -167,6 +170,7 @@ fn test_execution_phase_reset() {
                 .send(ExecutionChannelType(
                     blocks.clone(),
                     li_sig.clone(),
+                    empty_execute_phase_callback(),
                     empty_state_computer_call_back(),
                 ))
                 .await
@@ -190,6 +194,7 @@ fn test_execution_phase_reset() {
             .send(ExecutionChannelType(
                 blocks.clone(),
                 li_sig.clone(),
+                empty_execute_phase_callback(),
                 empty_state_computer_call_back(),
             ))
             .await

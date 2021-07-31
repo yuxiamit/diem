@@ -191,9 +191,9 @@ impl SyncInfo {
     }
 
     pub fn has_newer_certificates(&self, other: &SyncInfo) -> bool {
-        self.highest_certified_round() > other.highest_certified_round()
+        self.highest_ledger_info_round() > other.highest_ledger_info_round()
+            || self.highest_certified_round() > other.highest_certified_round()
             || self.highest_timeout_round() > other.highest_timeout_round()
             || self.highest_ordered_round() > other.highest_ordered_round()
-            || self.highest_ledger_info_round() > other.highest_ledger_info_round()
     }
 }

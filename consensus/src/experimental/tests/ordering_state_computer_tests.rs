@@ -15,7 +15,7 @@ use executor_types::StateComputeResult;
 use std::sync::Arc;
 
 use crate::{
-    experimental::execution_phase::{ExecutionChannelType, ResetAck},
+    experimental::execution_phase::{empty_execute_phase_callback, ExecutionChannelType, ResetAck},
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, EmptyStateComputer},
 };
@@ -91,11 +91,16 @@ fn test_ordering_state_computer() {
     // ordering_state_computer should send the same block and finality proof to the channel
     timed_block_on(&mut runtime, async move {
         state_computer
-            .commit(&blocks, li_sig.clone(), empty_state_computer_call_back())
+            .commit(
+                &blocks,
+                li_sig.clone(),
+                empty_state_computer_call_back(),
+                empty_execute_phase_callback(),
+            )
             .await
             .ok();
 
-        let ExecutionChannelType(ordered_block, finality_proof, _) =
+        let ExecutionChannelType(ordered_block, finality_proof, _, _) =
             commit_result_rx.next().await.unwrap();
         assert_eq!(ordered_block.len(), 1);
         assert_eq!(ordered_block[0], block);
