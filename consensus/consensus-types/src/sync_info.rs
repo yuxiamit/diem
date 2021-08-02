@@ -150,7 +150,7 @@ impl SyncInfo {
         ensure!(
             self.highest_ordered_cert().certified_block().round()
                 >= self.highest_ledger_info_round(),
-            "HOC has lower round than HCD"
+            "HOC has lower round than HLI"
         );
 
         ensure!(
@@ -191,6 +191,11 @@ impl SyncInfo {
     }
 
     pub fn has_newer_certificates(&self, other: &SyncInfo) -> bool {
+        // it is important that HLI has the first priority:
+        // otherwise, consider a node with a qc of round 200, but it has slow execution at HLI 10,
+        // and it was set to be sync_only. So this blocks the sync_up path until the local
+        // qc is smaller than remote qc. However, during sync_only, the node can still
+        // update the local qc through the process_vote path.
         self.highest_ledger_info_round() > other.highest_ledger_info_round()
             || self.highest_certified_round() > other.highest_certified_round()
             || self.highest_timeout_round() > other.highest_timeout_round()

@@ -4,6 +4,7 @@
 use crate::{counters, logging::LogEntry, ConsensusState, Error, SafetyRules, TSafetyRules};
 use consensus_types::{
     block_data::BlockData,
+    executed_block::ExecutedBlock,
     timeout::Timeout,
     timeout_2chain::{TwoChainTimeout, TwoChainTimeoutCertificate},
     vote::Vote,
@@ -11,10 +12,7 @@ use consensus_types::{
 };
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_infallible::RwLock;
-use diem_types::{
-    epoch_change::EpochChangeProof,
-    ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
-};
+use diem_types::{epoch_change::EpochChangeProof, ledger_info::LedgerInfoWithSignatures};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -33,7 +31,7 @@ pub enum SafetyRulesInput {
         Box<MaybeSignedVoteProposal>,
         Box<Option<TwoChainTimeoutCertificate>>,
     ),
-    SignCommitVote(Box<LedgerInfoWithSignatures>, Box<LedgerInfo>),
+    SignCommitVote(Box<LedgerInfoWithSignatures>, Box<ExecutedBlock>),
 }
 
 pub struct SerializerService {
@@ -72,11 +70,9 @@ impl SerializerService {
                         maybe_tc.as_ref().as_ref(),
                     ))
                 }
-                SafetyRulesInput::SignCommitVote(ledger_info, new_ledger_info) => bcs::to_bytes(
-                    &self
-                        .internal
-                        .sign_commit_vote(*ledger_info, *new_ledger_info),
-                ),
+                SafetyRulesInput::SignCommitVote(ledger_info, last_block) => {
+                    bcs::to_bytes(&self.internal.sign_commit_vote(*ledger_info, *last_block))
+                }
             };
 
         Ok(output?)
@@ -169,12 +165,12 @@ impl TSafetyRules for SerializerClient {
     fn sign_commit_vote(
         &mut self,
         ledger_info: LedgerInfoWithSignatures,
-        new_ledger_info: LedgerInfo,
+        last_block: ExecutedBlock,
     ) -> Result<Ed25519Signature, Error> {
         let _timer = counters::start_timer("external", LogEntry::SignCommitVote.as_str());
         let response = self.request(SafetyRulesInput::SignCommitVote(
             Box::new(ledger_info),
-            Box::new(new_ledger_info),
+            Box::new(last_block),
         ))?;
         bcs::from_bytes(&response)?
     }

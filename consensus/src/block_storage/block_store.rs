@@ -44,6 +44,7 @@ mod block_store_and_lec_recovery_test;
 pub mod sync_manager;
 
 fn update_counters_for_ordered_blocks(ordered_blocks: &[Arc<ExecutedBlock>]) {
+    counters::LAST_ORDERED_ROUND.set(ordered_blocks.last().unwrap().round() as i64);
     for block in ordered_blocks {
         observe_block(block.block().timestamp_usecs(), BlockStage::ORDERED);
     }
@@ -159,7 +160,7 @@ pub fn path_from_commit_root_with_block_tree(
     block_tree.read().path_from_commit_root(block_id)
 }
 
-pub fn recover_executor_block_tree_and_retry_execute_with_block_tree_and_state_computer(
+pub fn retry_execute_from_root(
     parent_block_id: HashValue,
     target_block: Block,
     block_tree: Arc<RwLock<BlockTree>>,
@@ -293,7 +294,7 @@ impl BlockStore {
                 });
         }
 
-        counters::LAST_COMMITTED_ROUND.set(block_store.ordered_root().round() as i64);
+        counters::LAST_COMMITTED_ROUND.set(block_store.commit_root().round() as i64);
         block_store
     }
 
@@ -317,8 +318,8 @@ impl BlockStore {
         assert!(!blocks_to_commit.is_empty());
 
         // prepare values for callback
-        let block_tree_in_commit_callbacl = self.inner.clone();
-        let block_tree_in_execution_failure_callbacl = self.inner.clone();
+        let block_tree_in_commit_callback = self.inner.clone();
+        let block_tree_in_execution_failure_callback = self.inner.clone();
         let storage = self.storage.clone();
         let commit_root = self.commit_root();
         let state_computer = self.state_computer.clone();
@@ -337,11 +338,11 @@ impl BlockStore {
                     move |executed_blocks: &[Arc<ExecutedBlock>],
                           commit_decision: LedgerInfoWithSignatures| {
                         // TODO: shall we merge these into a single write lock event?
-                        block_tree_in_commit_callbacl
+                        block_tree_in_commit_callback
                             .write()
                             .update_highest_ledger_info(commit_decision);
                         update_counters_and_prune_blocks(
-                            block_tree_in_commit_callbacl,
+                            block_tree_in_commit_callback,
                             storage,
                             commit_root,
                             executed_blocks,
@@ -350,10 +351,10 @@ impl BlockStore {
                 ),
                 Some(Box::new(move |parent_block_id, block|{
                     let res =
-                        recover_executor_block_tree_and_retry_execute_with_block_tree_and_state_computer(
+                        retry_execute_from_root(
                             parent_block_id,
                             block,
-                            block_tree_in_execution_failure_callbacl,
+                            block_tree_in_execution_failure_callback,
                             state_computer,
                         );
                     if let Err(e) = res {
@@ -469,7 +470,6 @@ impl BlockStore {
         match self.get_block(qc.certified_block().id()) {
             Some(executed_block) => {
                 ensure!(
-                    // decoupled execution allows dummy block infos
                     executed_block
                         .block_info()
                         .match_ordered_only(qc.certified_block()),

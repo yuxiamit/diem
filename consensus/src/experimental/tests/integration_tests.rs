@@ -33,14 +33,14 @@ use crate::{
 use consensus_types::executed_block::ExecutedBlock;
 use executor_types::StateComputeResult;
 use futures::channel::oneshot;
+use futures::channel::mpsc::unbounded;
 
 #[test]
 fn decoupled_execution_integration() {
-    let channel_size = 30;
     let mut runtime = consensus_runtime();
 
     let (execution_phase_tx, execution_phase_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+        unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<oneshot::Sender<ResetAck>>(1);
@@ -83,8 +83,8 @@ fn decoupled_execution_integration() {
 
     let ledger_info_with_sigs = a4.quorum_cert().ledger_info().clone();
 
-    let random_state_computer = RandomComputeResultStateComputer::new();
-    let random_execute_result_root_hash = random_state_computer.get_root_hash();
+    let mut random_state_computer = RandomComputeResultStateComputer::new();
+    random_state_computer.set_root_hash(a4.quorum_cert().certified_block().executed_state_id());
 
     let execution_phase = ExecutionPhase::new(
         execution_phase_rx,
@@ -130,7 +130,7 @@ fn decoupled_execution_integration() {
                     .ledger_info()
                     .commit_info()
                     .executed_state_id(),
-                random_execute_result_root_hash
+                a4.quorum_cert().certified_block().executed_state_id(),
             );
             callback(
                 &executed_blocks

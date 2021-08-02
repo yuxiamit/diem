@@ -52,7 +52,7 @@ use crate::experimental::{
         prepare_executed_blocks_with_ordered_ledger_info,
     },
 };
-use futures::channel::oneshot;
+use futures::channel::{oneshot, mpsc::UnboundedReceiver};
 use tokio::runtime::Runtime;
 
 const TEST_CHANNEL_SIZE: usize = 30;
@@ -63,7 +63,7 @@ pub fn prepare_commit_phase(
     Sender<CommitChannelType>,
     Sender<VerifiedEvent>,
     Sender<oneshot::Sender<ResetAck>>,
-    Receiver<ExecutionChannelType>,
+    UnboundedReceiver<ExecutionChannelType>,
     Receiver<Event<ConsensusMsg>>,
     Arc<Mutex<MetricsSafetyRules>>,
     Vec<ValidatorSigner>,

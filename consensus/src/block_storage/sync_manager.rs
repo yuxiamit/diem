@@ -28,6 +28,7 @@ use diem_types::{
 use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
 use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
+use diem_config::config::DEFAULT_BACK_PRESSURE_LIMIT;
 
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
@@ -54,8 +55,21 @@ impl BlockStore {
         // If we have the block locally, we're not far from this QC thus don't need to sync.
         // In case root().round() is greater than that the committed
         // block carried by LI is older than my current commit.
-        !(self.block_exists(qc.commit_info().id())
-            || self.commit_root().round() >= li.commit_info().round())
+        // !(self.block_exists(qc.commit_info().id())
+        //    || self.commit_root().round() >= li.commit_info().round())
+
+        // if sync to this node really helps and ..
+        self.commit_root().round() < li.commit_info().round()
+            && (
+            // we are in sync only mode, or ..
+            self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= self.ordered_root().round() || // if at sync only
+            // we do not have the block locally
+            !self.block_exists(qc.commit_info().id())
+        )
+        /*
+        !(self.commit_root().round() + 5 >= self.ordered_root().round() ||
+            self.commit_root().round() >= li.commit_info().round())
+            */
     }
 
     /// Checks if quorum certificate can be inserted in block store without RPC
@@ -175,6 +189,13 @@ impl BlockStore {
         highest_ledger_info: LedgerInfoWithSignatures,
         retriever: &mut BlockRetriever,
     ) -> anyhow::Result<()> {
+
+        debug!("sync_to_highest_ordered_cert HLI:{}, ordered_root_round: {} commit_root_round: {}",
+            highest_ledger_info,
+            self.ordered_root().round(),
+            self.commit_root().round(),
+        );
+
         if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info) {
             return Ok(());
         }
@@ -214,16 +235,16 @@ impl BlockStore {
         storage: Arc<dyn PersistentLivenessStorage>,
         state_computer: Arc<dyn StateComputer>,
     ) -> anyhow::Result<RecoveryData> {
-        debug!(
-            LogSchema::new(LogEvent::StateSync).remote_peer(retriever.preferred_peer),
-            "Start state sync with peer to block: {}",
-            highest_ordered_cert.commit_info(),
-        );
-
         // we fetch the blocks from
         let num_blocks = highest_ordered_cert.certified_block().round()
             - highest_ledger_info.ledger_info().round()
             + 1;
+
+        debug!(
+            LogSchema::new(LogEvent::StateSync).remote_peer(retriever.preferred_peer),
+            "Start state sync with peer to block: {}, plan to fetch {} blocks",
+            highest_ordered_cert.commit_info(), num_blocks,
+        );
 
         let blocks = retriever
             .retrieve_block_for_qc(highest_ordered_cert, num_blocks)
@@ -299,7 +320,7 @@ impl BlockRetriever {
         peers: &mut Vec<&AccountAddress>,
         num_blocks: u64,
     ) -> anyhow::Result<Vec<Block>> {
-        //info!("Retrieving {} blocks starting from {}", num_blocks, block_id);
+        info!("Retrieving {} blocks starting from {}", num_blocks, block_id);
         let mut attempt = 0_u32;
         let mut progress = 0;
         let mut last_block_id = block_id;

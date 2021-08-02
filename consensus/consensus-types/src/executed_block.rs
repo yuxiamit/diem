@@ -14,12 +14,13 @@ use diem_types::{
     transaction::{Transaction, TransactionStatus},
 };
 use executor_types::StateComputeResult;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 
 /// ExecutedBlocks are managed in a speculative tree, the committed blocks form a chain. Besides
 /// block data, each executed block also has other derived meta data which could be regenerated from
 /// blocks.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecutedBlock {
     /// Block data that cannot be regenerated.
     block: Block,

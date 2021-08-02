@@ -138,6 +138,10 @@ impl RandomComputeResultStateComputer {
         }
     }
 
+    pub fn set_root_hash(&mut self, new_hash: HashValue) {
+        self.random_compute_result_root_hash = new_hash
+    }
+
     pub fn get_root_hash(&self) -> HashValue {
         self.random_compute_result_root_hash
     }

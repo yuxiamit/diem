@@ -348,7 +348,7 @@ impl BlockTree {
         }
     }
 
-    /// Returns all the blocks between the commit root and the given block, including the given block
+    /// Returns all the blocks between the ordered/commit root and the given block, including the given block
     /// but excluding the root.
     /// In case a given block is not the successor of the root, return None.
     /// While generally the provided blocks should always belong to the active tree, there might be

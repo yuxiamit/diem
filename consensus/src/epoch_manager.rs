@@ -51,6 +51,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use futures::channel::mpsc::unbounded;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -303,10 +304,10 @@ impl EpochManager {
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         network_sender: NetworkSender,
     ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase)> {
-        let (execution_phase_tx, execution_phase_rx) = channel::new::<ExecutionChannelType>(
-            self.config.channel_size,
-            &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_CHANNEL,
-        );
+        let (
+            execution_phase_tx,
+            execution_phase_rx
+        ) = unbounded::<ExecutionChannelType>();
 
         let (execution_phase_reset_tx, execution_phase_reset_rx) =
             channel::new::<oneshot::Sender<ResetAck>>(

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use short_hex_str::AsShortHexStr;
 use std::fmt;
 
-pub const MAX_BLOCKS_PER_REQUEST: u64 = 10;
+pub const MAX_BLOCKS_PER_REQUEST: u64 = 100;
 
 /// RPC to get a chain of block of the given length starting from the given block id.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
