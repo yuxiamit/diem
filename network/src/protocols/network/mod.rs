@@ -15,6 +15,7 @@ use crate::{
 };
 use bytes::Bytes;
 use channel::diem_channel;
+use diem_config::config::MAX_FRAME_SIZE;
 use diem_logger::prelude::*;
 use diem_types::{network_address::NetworkAddress, PeerId};
 use futures::{
@@ -288,7 +289,8 @@ impl<TMessage: Message> NetworkSender<TMessage> {
         timeout: Duration,
     ) -> Result<TMessage, RpcError> {
         // serialize request
-        let req_data = protocol.to_bytes(&req_msg)?.into();
+        let req_data: Bytes = protocol.to_bytes(&req_msg)?.into();
+        assert!(req_data.len() < MAX_FRAME_SIZE);
         let res_data = self
             .peer_mgr_reqs_tx
             .send_rpc(recipient, protocol, req_data, timeout)

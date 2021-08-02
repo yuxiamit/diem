@@ -14,6 +14,7 @@ use consensus_types::{
     block::Block,
     block_data::BlockData,
     common::{Author, Round},
+    executed_block::ExecutedBlock,
     quorum_cert::QuorumCert,
     safety_data::SafetyData,
     timeout::Timeout,
@@ -109,6 +110,14 @@ impl SafetyRules {
 
         if self.decoupled_execution {
             Ok(vote_proposal.vote_data_ordering_only())
+            /*
+            // TODO: uncomment after we turn on extension check
+            let new_tree = vote_proposal
+                .accumulator_extension_proof()
+                .next_without_verify()
+                .map_err(|e| Error::InvalidAccumulatorExtension(e.to_string()))?;
+            Ok(vote_proposal.vote_data_with_extension_proof(&new_tree.0))
+             */
         } else {
             self.extension_check(vote_proposal)
         }
@@ -467,7 +476,7 @@ impl SafetyRules {
     fn guarded_sign_commit_vote(
         &mut self,
         ledger_info: LedgerInfoWithSignatures,
-        new_ledger_info: LedgerInfo,
+        last_block: ExecutedBlock,
     ) -> Result<Ed25519Signature, Error> {
         self.signer()?;
 
@@ -476,6 +485,11 @@ impl SafetyRules {
         if !old_ledger_info.commit_info().is_ordered_only() {
             return Err(Error::InvalidOrderedLedgerInfo(old_ledger_info.to_string()));
         }
+
+        let new_ledger_info = LedgerInfo::new(
+            last_block.block_info(),
+            ledger_info.ledger_info().consensus_data_hash(),
+        );
 
         if !old_ledger_info
             .commit_info()
@@ -487,13 +501,19 @@ impl SafetyRules {
             ));
         }
 
+        /*
+        // TODO: think about how we should do the extension check by batch
+        // extension check
+        let extension_proof = last_block.compute_result().extension_proof();
+        extension_proof
+            .verify(some_parent_executed_id)
+            .map_err(|e| Error::InvalidAccumulatorExtension(e.to_string()))?;
+         */
+
         // Verify that ledger_info contains at least 2f + 1 dostinct signatures
         ledger_info
             .verify_signatures(&self.epoch_state()?.verifier)
             .map_err(|error| Error::InvalidQuorumCertificate(error.to_string()))?;
-
-        // TODO: add guarding rules in unhappy path
-        // TODO: add extension check
 
         let signature = self.sign(&new_ledger_info)?;
 
@@ -564,9 +584,9 @@ impl TSafetyRules for SafetyRules {
     fn sign_commit_vote(
         &mut self,
         ledger_info: LedgerInfoWithSignatures,
-        new_ledger_info: LedgerInfo,
+        last_block: ExecutedBlock,
     ) -> Result<Ed25519Signature, Error> {
-        let cb = || self.guarded_sign_commit_vote(ledger_info, new_ledger_info);
+        let cb = || self.guarded_sign_commit_vote(ledger_info, last_block);
         run_and_log(cb, |log| log, LogEntry::SignCommitVote)
     }
 }

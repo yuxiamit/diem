@@ -13,6 +13,7 @@ use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
 use futures::{channel::oneshot, select, FutureExt, SinkExt, StreamExt};
 use std::sync::Arc;
+use futures::channel::mpsc::UnboundedReceiver;
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from
@@ -50,7 +51,7 @@ impl std::fmt::Display for ExecutionChannelType {
 }
 
 pub struct ExecutionPhase {
-    executor_channel_rx: Receiver<ExecutionChannelType>,
+    executor_channel_rx: UnboundedReceiver<ExecutionChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
     commit_channel_tx: Sender<CommitChannelType>,
     reset_event_channel_rx: Receiver<oneshot::Sender<ResetAck>>,
@@ -60,7 +61,7 @@ pub struct ExecutionPhase {
 
 impl ExecutionPhase {
     pub fn new(
-        executor_channel_rx: Receiver<ExecutionChannelType>,
+        executor_channel_rx: UnboundedReceiver<ExecutionChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
         commit_channel_tx: Sender<CommitChannelType>,
         reset_event_channel_rx: Receiver<oneshot::Sender<ResetAck>>,

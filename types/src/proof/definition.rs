@@ -863,11 +863,11 @@ impl TransactionListProof {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AccumulatorExtensionProof<H> {
     /// Represents the roots of all the full subtrees from left to right in the original accumulator.
-    frozen_subtree_roots: Vec<HashValue>,
+    pub frozen_subtree_roots: Vec<HashValue>,
     /// The total number of leaves in original accumulator.
-    num_leaves: LeafCount,
+    pub num_leaves: LeafCount,
     /// The values representing the newly appended leaves.
-    leaves: Vec<HashValue>,
+    pub leaves: Vec<HashValue>,
 
     hasher: PhantomData<H>,
 }
@@ -886,16 +886,22 @@ impl<H: CryptoHasher> AccumulatorExtensionProof<H> {
         }
     }
 
-    pub fn verify(&self, original_root: HashValue) -> anyhow::Result<InMemoryAccumulator<H>> {
+    pub fn next_without_verify(&self) -> anyhow::Result<(InMemoryAccumulator<H>, HashValue)> {
         let original_tree =
             InMemoryAccumulator::<H>::new(self.frozen_subtree_roots.clone(), self.num_leaves)?;
+
+        let prev_root_hash = original_tree.root_hash();
+        Ok((original_tree.append(self.leaves.as_slice()), prev_root_hash))
+    }
+
+    pub fn verify(&self, original_root: HashValue) -> anyhow::Result<InMemoryAccumulator<H>> {
+        let (original_tree, prev_root_hash) = self.next_without_verify()?;
         ensure!(
-            original_tree.root_hash() == original_root,
+            prev_root_hash == original_root,
             "Root hashes do not match. Actual root hash: {:x}. Expected root hash: {:x}.",
-            original_tree.root_hash(),
+            prev_root_hash,
             original_root
         );
-
-        Ok(original_tree.append(self.leaves.as_slice()))
+        Ok(original_tree)
     }
 }

@@ -174,6 +174,24 @@ impl StateComputeResult {
         }
     }
 
+    pub fn new_dummy_with_extension_proof(
+        root_hash: HashValue,
+        extension_proof: AccumulatorExtensionProof<TransactionAccumulatorHasher>,
+    ) -> Self {
+        Self {
+            root_hash,
+            frozen_subtree_roots: vec![],
+            num_leaves: 0,
+            parent_frozen_subtree_roots: extension_proof.frozen_subtree_roots.clone(),
+            parent_num_leaves: extension_proof.num_leaves,
+            epoch_state: None,
+            compute_status: vec![],
+            transaction_info_hashes: extension_proof.leaves,
+            reconfig_events: vec![],
+            signature: None,
+        }
+    }
+
     /// generate a new dummy state compute result with ACCUMULATOR_PLACEHOLDER_HASH as the root hash.
     /// this function is used in ordering_state_computer as a dummy state compute result,
     /// where the real compute result is generated after ordering_state_computer.commit pushes

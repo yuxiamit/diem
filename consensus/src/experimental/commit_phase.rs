@@ -348,10 +348,10 @@ impl CommitPhase {
                 .match_ordered_only(ordered_ledger_info.commit_info())
             {
                 let commit_ledger_info = pending_block.ledger_info_sig().ledger_info();
-                let sign_result = self
-                    .safety_rules
-                    .lock()
-                    .sign_commit_vote(ordered_ledger_info.clone(), commit_ledger_info.clone());
+                let sign_result = self.safety_rules.lock().sign_commit_vote(
+                    ordered_ledger_info.clone(),
+                    pending_block.blocks.last().unwrap().clone(),
+                );
 
                 if let Ok(signature) = sign_result {
                     let commit_vote = CommitVote::new_with_signature(
@@ -480,7 +480,7 @@ impl CommitPhase {
             // if we are still collecting the signatures
             tokio::select! {
                 // process messages dispatched from epoch_manager
-                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
+                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() => {
                         match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
@@ -505,23 +505,27 @@ impl CommitPhase {
                         );
                 }
                 Some(retry_event) = self.timeout_event_rx.next(), if !self.commit_channel_recv.is_terminated()  => {
-                    self.process_retry_event(retry_event).await;
+                    monitor!("process_retry_event", self.process_retry_event(retry_event).await);
                 }
                 // callback event might come when self.blocks is not empty
                 Some(reset_event_callback) = self.reset_event_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.reset_event_rx.is_terminated() => {
+                    monitor!("process_reset_event",
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
                         })
-                        .unwrap();
+                        .unwrap()
+                    );
                 }
                 Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),
                     if !self.commit_channel_recv.is_terminated() && self.blocks.is_none() => {
-                        report_err!(
-                            // receive new blocks from execution phase
-                            self.process_executed_blocks(blocks, ordered_ledger_info, callback)
-                                .await,
-                            "Error in processing received blocks"
-                        );
+                        monitor!("process_executed_blocks",
+                            report_err!(
+                                // receive new blocks from execution phase
+                                self.process_executed_blocks(blocks, ordered_ledger_info, callback)
+                                    .await,
+                                "Error in processing received blocks"
+                            )
+                        )
                 }
                 else => break,
             }

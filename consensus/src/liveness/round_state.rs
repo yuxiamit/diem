@@ -134,7 +134,7 @@ pub struct RoundState {
     // Highest known committed round as reported by the caller. The caller might choose not to
     // inform the RoundState about certain committed rounds (e.g., NIL blocks): in this case the
     // committed round in RoundState might lag behind the committed round of a block tree.
-    highest_committed_round: Round,
+    highest_ordered_round: Round,
     // Current round is max{highest_qc, highest_tc} + 1.
     current_round: Round,
     // The deadline for the next local timeout event. It is reset every time a new round start, or
@@ -166,7 +166,7 @@ impl<'a> RoundStateLogSchema<'a> {
         match round_state {
             Some(state) => Self {
                 round: Some(state.current_round),
-                committed_round: Some(state.highest_committed_round),
+                committed_round: Some(state.highest_ordered_round),
                 pending_votes: Some(&state.pending_votes),
                 self_vote: state.vote_sent.as_ref(),
             },
@@ -189,7 +189,7 @@ impl RoundState {
 
         Self {
             time_interval,
-            highest_committed_round: 0,
+            highest_ordered_round: 0,
             current_round: 0,
             current_round_deadline: time_service.get_current_timestamp(),
             time_service,
@@ -224,8 +224,8 @@ impl RoundState {
     /// Notify the RoundState about the potentially new QC, TC, and highest committed round.
     /// Note that some of these values might not be available by the caller.
     pub fn process_certificates(&mut self, sync_info: SyncInfo) -> Option<NewRoundEvent> {
-        if sync_info.highest_ordered_round() > self.highest_committed_round {
-            self.highest_committed_round = sync_info.highest_ordered_round();
+        if sync_info.highest_ordered_round() > self.highest_ordered_round {
+            self.highest_ordered_round = sync_info.highest_ordered_round();
         }
         let new_round = sync_info.highest_round() + 1;
         if new_round > self.current_round {
@@ -293,14 +293,14 @@ impl RoundState {
     /// Setup the current round deadline and return the duration of the current round
     fn setup_deadline(&mut self) -> Duration {
         let round_index_after_committed_round = {
-            if self.highest_committed_round == 0 {
+            if self.highest_ordered_round == 0 {
                 // Genesis doesn't require the 3-chain rule for commit, hence start the index at
                 // the round after genesis.
                 self.current_round - 1
-            } else if self.current_round < self.highest_committed_round + 3 {
+            } else if self.current_round < self.highest_ordered_round + 3 {
                 0
             } else {
-                self.current_round - self.highest_committed_round - 3
+                self.current_round - self.highest_ordered_round - 3
             }
         } as usize;
         let timeout = self

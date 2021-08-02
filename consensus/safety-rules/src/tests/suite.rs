@@ -5,6 +5,7 @@ use crate::{test_utils, test_utils::make_timeout_cert, Error, SafetyRules, TSafe
 use consensus_types::{
     block::block_test_utils::random_payload,
     common::Round,
+    executed_block::ExecutedBlock,
     quorum_cert::QuorumCert,
     timeout::Timeout,
     timeout_2chain::{TwoChainTimeout, TwoChainTimeoutCertificate},
@@ -18,12 +19,12 @@ use diem_global_constants::CONSENSUS_KEY;
 use diem_secure_storage::CryptoStorage;
 use diem_types::{
     account_address::AccountAddress,
-    block_info::BlockInfo,
     epoch_state::EpochState,
     ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
     validator_signer::ValidatorSigner,
     validator_verifier::ValidatorVerifier,
 };
+use executor_types::StateComputeResult;
 use std::collections::BTreeMap;
 
 type Proof = test_utils::Proof;
@@ -983,6 +984,20 @@ fn test_sign_commit_vote(constructor: &Callback) {
 
     // now we try to agree on a1's execution result
     let ledger_info_with_sigs = a3.block().quorum_cert().ledger_info();
+
+    let accumulator_extension_proof = a3.accumulator_extension_proof().clone();
+
+    let good_executed_a1 = ExecutedBlock::new(
+        a1.block().clone(),
+        StateComputeResult::new_dummy_with_extension_proof(
+            a3.block()
+                .quorum_cert()
+                .certified_block()
+                .executed_state_id(),
+            accumulator_extension_proof,
+        ),
+    );
+
     // make sure this is for a1
     assert!(ledger_info_with_sigs
         .ledger_info()
@@ -993,10 +1008,7 @@ fn test_sign_commit_vote(constructor: &Callback) {
         ));
 
     assert!(safety_rules
-        .sign_commit_vote(
-            ledger_info_with_sigs.clone(),
-            ledger_info_with_sigs.ledger_info().clone()
-        )
+        .sign_commit_vote(ledger_info_with_sigs.clone(), good_executed_a1.clone(),)
         .is_ok());
 
     // check empty ledger info
@@ -1004,7 +1016,7 @@ fn test_sign_commit_vote(constructor: &Callback) {
         safety_rules
             .sign_commit_vote(
                 a2.block().quorum_cert().ledger_info().clone(),
-                a3.block().quorum_cert().ledger_info().ledger_info().clone()
+                good_executed_a1.clone(),
             )
             .unwrap_err(),
         Error::InvalidOrderedLedgerInfo(_)
@@ -1025,7 +1037,7 @@ fn test_sign_commit_vote(constructor: &Callback) {
                     ),
                     BTreeMap::<AccountAddress, Ed25519Signature>::new()
                 ),
-                ledger_info_with_sigs.ledger_info().clone()
+                good_executed_a1.clone(),
             )
             .unwrap_err(),
         Error::InvalidOrderedLedgerInfo(_)
@@ -1039,21 +1051,24 @@ fn test_sign_commit_vote(constructor: &Callback) {
                     ledger_info_with_sigs.ledger_info().clone(),
                     BTreeMap::<AccountAddress, Ed25519Signature>::new()
                 ),
-                ledger_info_with_sigs.ledger_info().clone()
+                good_executed_a1,
             )
             .unwrap_err(),
         Error::InvalidQuorumCertificate(_)
     ));
 
     // inconsistent ledger_info test
-    let bad_ledger_info = LedgerInfo::new(
-        BlockInfo::random(ledger_info_with_sigs.ledger_info().round()),
-        ledger_info_with_sigs.ledger_info().consensus_data_hash(),
+    let bad_executed_block = ExecutedBlock::new(
+        a3.block().clone(),
+        StateComputeResult::new_dummy_with_extension_proof(
+            ledger_info_with_sigs.commit_info().executed_state_id(),
+            a3.accumulator_extension_proof().clone(),
+        ),
     );
 
     assert!(matches!(
         safety_rules
-            .sign_commit_vote(ledger_info_with_sigs.clone(), bad_ledger_info,)
+            .sign_commit_vote(ledger_info_with_sigs.clone(), bad_executed_block,)
             .unwrap_err(),
         Error::InconsistentExecutionResult(_, _)
     ));

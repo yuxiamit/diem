@@ -6686,6 +6686,7 @@ dependencies = [
  "diem-types",
  "diem-vault-client",
  "diem-workspace-hack",
+ "executor-types",
  "once_cell",
  "proptest",
  "rand 0.8.3",

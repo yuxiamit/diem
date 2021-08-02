@@ -6,6 +6,8 @@ use diem_types::{account_address::AccountAddress, block_info::Round};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
+pub const DEFAULT_BACK_PRESSURE_LIMIT: u64 = 10;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConsensusConfig {
@@ -49,7 +51,7 @@ impl Default for ConsensusConfig {
             mempool_poll_count: 1,
             decoupled_execution: true, // by default, we turn of the decoupling execution feature
             channel_size: 60,          // hard-coded
-            back_pressure_limit: 1,
+            back_pressure_limit: DEFAULT_BACK_PRESSURE_LIMIT,
         }
     }
 }

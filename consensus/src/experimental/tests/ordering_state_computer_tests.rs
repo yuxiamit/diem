@@ -25,16 +25,16 @@ use diem_types::{account_address::AccountAddress, validator_signer::ValidatorSig
 use futures::{channel::oneshot, StreamExt};
 use rand::Rng;
 use std::collections::BTreeMap;
+use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 
 pub fn prepare_ordering_state_computer(
-    channel_size: usize,
 ) -> (
     Arc<OrderingStateComputer>,
-    Receiver<ExecutionChannelType>,
+    UnboundedReceiver<ExecutionChannelType>,
     Receiver<oneshot::Sender<ResetAck>>,
 ) {
     let (commit_result_tx, commit_result_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+        unbounded::<ExecutionChannelType>();
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<oneshot::Sender<ResetAck>>(1);
     let state_computer = Arc::new(OrderingStateComputer::new(
@@ -54,10 +54,9 @@ pub fn random_empty_block(signer: &ValidatorSigner, qc: QuorumCert) -> Block {
 #[test]
 fn test_ordering_state_computer() {
     let num_nodes = 1;
-    let channel_size = 30;
     let mut runtime = consensus_runtime();
 
-    let (state_computer, mut commit_result_rx, _) = prepare_ordering_state_computer(channel_size);
+    let (state_computer, mut commit_result_rx, _) = prepare_ordering_state_computer();
 
     let (signers, _) = random_validator_verifier(num_nodes, None, false);
     let signer = &signers[0];

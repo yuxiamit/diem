@@ -25,6 +25,15 @@ pub static ERROR_COUNT: Lazy<IntGauge> = Lazy::new(|| {
 });
 
 /// This counter is set to the round of the highest committed block.
+pub static LAST_ORDERED_ROUND: Lazy<IntGauge> = Lazy::new(|| {
+    register_int_gauge!(
+        "diem_consensus_last_ordered_round",
+        "This counter is set to the round of the highest ordered block."
+    )
+        .unwrap()
+});
+
+/// This counter is set to the round of the highest committed block.
 pub static LAST_COMMITTED_ROUND: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
         "diem_consensus_last_committed_round",
@@ -277,21 +286,11 @@ pub static BLOCK_RETRIEVAL_CHANNEL_MSGS: Lazy<IntCounterVec> = Lazy::new(|| {
 // DECOUPLED EXECUTION CHANNEL COUNTERS
 ///////////////////
 
-/// Counter for the decoupling execution channel of ordered blocks
-/// from ordering state computer to execution phase
-pub static DECOUPLED_EXECUTION__EXECUTION_PHASE_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
-    register_int_gauge!(
-        "decoupled_execution__execution_phase_channel",
-        "Number of pending ordered only blocks"
-    )
-    .unwrap()
-});
-
 /// Counter for the decoupling execution channel of executed blocks
 /// from execution phase to commit phase
 pub static DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
-        "decoupled_execution__commit_phase_channel",
+        "diem_decoupled_execution__commit_phase_channel",
         "Number of pending executed blocks"
     )
     .unwrap()
@@ -301,7 +300,7 @@ pub static DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL: Lazy<IntGauge> = Lazy::new
 /// from epoch_manager to commit phase
 pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
-        "decoupled_execution__commit_message_channel",
+        "diem_decoupled_execution__commit_message_channel",
         "Number of pending commit phase messages (CommitVote/CommitDecision)"
     )
     .unwrap()
@@ -311,7 +310,7 @@ pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL: Lazy<IntGauge> = Lazy::n
 /// from commit phase to itself when a timeout triggers
 pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_TIMEOUT_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
-        "decoupled_execution__commit_message_timeout_channel",
+        "diem_decoupled_execution__commit_message_timeout_channel",
         "Number of pending commit phase message timeouts (CommitVote/CommitDecision)"
     )
     .unwrap()
@@ -321,7 +320,7 @@ pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_TIMEOUT_CHANNEL: Lazy<IntGauge> =
 /// from execution phase to commit phase when a reset event occurs at the execution phase
 pub static DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
-        "decoupled_execution__commit_phase_reset_channel",
+        "diem_decoupled_execution__commit_phase_reset_channel",
         "Number of pending commit phase reset events"
     )
     .unwrap()
@@ -331,7 +330,7 @@ pub static DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL: Lazy<IntGauge> = Laz
 /// from outside (block_store) to execution phase when a reset event occurs
 pub static DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
     register_int_gauge!(
-        "decoupled_execution__execution_phase_reset_channel",
+        "diem_decoupled_execution__execution_phase_reset_channel",
         "Number of pending execution phase reset events"
     )
     .unwrap()

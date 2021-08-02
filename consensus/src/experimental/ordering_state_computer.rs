@@ -14,6 +14,7 @@ use executor_types::{Error as ExecutionError, StateComputeResult};
 use fail::fail_point;
 use futures::SinkExt;
 use std::{boxed::Box, sync::Arc};
+use futures::channel::mpsc::UnboundedSender;
 
 use crate::{
     experimental::{
@@ -24,20 +25,21 @@ use crate::{
 };
 use futures::channel::oneshot;
 
+
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
 /// Used only when node_config.validator.consensus.decoupled = true.
 pub struct OrderingStateComputer {
     // the channel to pour vectors of blocks into
     // the real execution phase (will be handled in ExecutionPhase).
-    executor_channel: Sender<ExecutionChannelType>,
+    executor_channel: UnboundedSender<ExecutionChannelType>,
     state_computer_for_sync: Arc<dyn StateComputer>,
     reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
 }
 
 impl OrderingStateComputer {
     pub fn new(
-        executor_channel: Sender<ExecutionChannelType>,
+        executor_channel: UnboundedSender<ExecutionChannelType>,
         state_computer_for_sync: Arc<dyn StateComputer>,
         reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
     ) -> Self {
