@@ -26,6 +26,7 @@ use move_core_types::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::btree_map::BTreeMap, convert::TryFrom, fmt};
+use crate::on_chain_config::OnChainConsensusConfig;
 
 #[derive(Default, Deserialize, PartialEq, Serialize)]
 pub struct AccountState(BTreeMap<Vec<u8>, Vec<u8>>);

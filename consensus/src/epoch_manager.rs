@@ -51,6 +51,14 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use diem_types::on_chain_config::OnChainConsensusConfig;
+use diem_types::account_config::{diem_root_address, CORE_CODE_ADDRESS, XUS_NAME};
+use vm_validator::vm_validator::get_account_sequence_number;
+use diem_types::transaction::{TransactionArgument, ScriptFunction, RawTransaction, TransactionPayload};
+use move_core_types::language_storage::ModuleId;
+use move_core_types::identifier::Identifier;
+use move_core_types::transaction_argument::convert_txn_args;
+use diem_types::chain_id::ChainId;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -531,7 +539,7 @@ impl EpochManager {
         info!(epoch = epoch, "SyncProcessor started");
     }
 
-    async fn start_processor(&mut self, payload: OnChainConfigPayload) {
+    async fn start_processor(&mut self, payload: &OnChainConfigPayload) {
         let validator_set: ValidatorSet = payload
             .get()
             .expect("failed to get ValidatorSet from payload");
@@ -540,18 +548,25 @@ impl EpochManager {
             verifier: (&validator_set).into(),
         };
 
-        /*
         // update decoupled-execution configs, if there is any
         if let Ok(decoupled_execution_config) = payload.get::<OnChainConsensusConfig>() {
-            self.config.back_pressure_limit = decoupled_execution_config.inner.back_pressure_limit;
-            self.config.decoupled_execution = decoupled_execution_config.inner.decoupled_execution;
-            self.config.channel_size = decoupled_execution_config.inner.channel_size;
+            self.config.back_pressure_limit = decoupled_execution_config.back_pressure_limit;
+            self.config.decoupled_execution = decoupled_execution_config.decoupled_execution;
+            self.config.channel_size = decoupled_execution_config.channel_size as usize;
+            self.config.safety_rules.decoupled_execution = decoupled_execution_config.decoupled_execution;
+            // reflect the config changes
+            self.safety_rules_manager = SafetyRulesManager::new(&self.config.safety_rules);
         }
-        */
 
         match self.storage.start() {
             LivenessStorageData::RecoveryData(initial_data) => {
-                self.start_round_manager(initial_data, epoch_state).await
+                self.start_round_manager(initial_data, epoch_state).await;
+                // if the onchain configuration is not consistent with the node config, we propose to change it
+                if Ok(on_chain_consensus_config) = payload.get::<OnChainConsensusConfig>() {
+                    if self.config.is_consistent(on_chain_consensus_config) {
+                        self.propose_reconfiguration().await;
+                    }
+                }
             }
             LivenessStorageData::LedgerRecoveryData(ledger_recovery_data) => {
                 self.start_recovery_manager(ledger_recovery_data, epoch_state)
@@ -722,9 +737,47 @@ impl EpochManager {
         }
     }
 
+    async fn propose_reconfiguration(&self) -> Result<()r> {
+        let root_address = diem_root_address();
+        let blob = self.storage.diem_db()
+            .get_latest_account_state(root_address)?;
+        let account_state = AccountState::try_from(&blob)?;
+        let mut args = vec![
+            TransactionArgument::U64(seq_num),
+            TransactionArgument::U8Vector(
+                self.config.produce_on_chain_config().produce_move_argument()
+            ),
+        ];
+        let script = ScriptFunction::new(
+            ModuleId::new(
+                CORE_CODE_ADDRESS,
+                Identifier::new("SystemAdministrationScripts").unwrap(),
+            ),
+            Identifier::new("update_dime_consensus_config").unwrap(),
+            vec![],
+            convert_txn_args(&args),
+        );
+        let seq_num = 0; // TODO
+        let gas = 0; // TODO
+        let expiration_time = 4_00;
+        let chain_id = ChainId::default();
+        let _txn = RawTransaction::new(
+            root_address,
+            seq_num,
+            TransactionPayload::ScriptFunction(script),
+            gas,
+            0,
+            XUS_NAME.to_owned(),
+            expiration_time,
+            chain_id,
+        ); //.sign();
+
+        //assert_eq!(executor.execute_and_apply(generate_txn(seq_num + 1, "update_diem_consensus_config", Some(vec![1,2,3]))).status(), &TransactionStatus::Keep(KeptVMStatus::Executed));
+    }
+
     async fn expect_new_epoch(&mut self) {
         if let Some(payload) = self.reconfig_events.next().await {
-            self.start_processor(payload).await;
+            self.start_processor(&payload).await;
         } else {
             panic!("Reconfig sender dropped, unable to start new epoch.");
         }

@@ -22,6 +22,7 @@ mod registered_currencies;
 mod validator_set;
 mod vm_config;
 mod vm_publishing_option;
+mod onchain_consensus_config;
 
 pub use self::{
     diem_version::{DiemVersion, DIEM_MAX_KNOWN_VERSION, DIEM_VERSION_2, DIEM_VERSION_3},
@@ -29,6 +30,7 @@ pub use self::{
     validator_set::ValidatorSet,
     vm_config::VMConfig,
     vm_publishing_option::VMPublishingOption,
+    onchain_consensus_config::OnChainConsensusConfig,
 };
 
 /// To register an on-chain config in Rust:
@@ -70,6 +72,7 @@ pub const ON_CHAIN_CONFIG_REGISTRY: &[ConfigID] = &[
     DiemVersion::CONFIG_ID,
     ValidatorSet::CONFIG_ID,
     RegisteredCurrencies::CONFIG_ID,
+    OnChainConsensusConfig::CONFIG_ID,
 ];
 
 #[derive(Clone, Debug, PartialEq)]

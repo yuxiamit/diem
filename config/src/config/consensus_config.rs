@@ -5,6 +5,7 @@ use crate::config::SafetyRulesConfig;
 use diem_types::{account_address::AccountAddress, block_info::Round};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
+use diem_types::on_chain_config::OnChainConsensusConfig;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -47,7 +48,7 @@ impl Default for ConsensusConfig {
             safety_rules: SafetyRulesConfig::default(),
             sync_only: false,
             mempool_poll_count: 1,
-            decoupled_execution: true, // by default, we turn of the decoupling execution feature
+            decoupled_execution: false, // by default, we turn of the decoupling execution feature
             channel_size: 60,          // hard-coded
             back_pressure_limit: 1,
         }
@@ -57,6 +58,18 @@ impl Default for ConsensusConfig {
 impl ConsensusConfig {
     pub fn set_data_dir(&mut self, data_dir: PathBuf) {
         self.safety_rules.set_data_dir(data_dir);
+    }
+    pub fn is_consistent(&self, on_chain_consensus_config: &OnChainConsensusConfig) -> bool {
+        on_chain_consensus_config.back_pressure_limit == self.back_pressure_limit
+        && on_chain_consensus_config.decoupled_execution == self.decoupled_execution
+        && on_chain_consensus_config.channel_size as usize == self.channel_size
+    }
+    pub fn produce_on_chain_config(&self) -> OnChainConsensusConfig {
+        OnChainConsensusConfig {
+            decoupled_execution: self.decoupled_execution,
+            back_pressure_limit: self.back_pressure_limit,
+            channel_size: self.channel_size as u32,
+        }
     }
 }
 

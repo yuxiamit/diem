@@ -280,6 +280,7 @@ fn transfer_and_reconfig(
 ) -> f64 {
     let now = Instant::now();
     let mut transferred = 0f64;
+    // TODO: change 1.0 to the reflect the version in CURRENT_RELEASE_VERSIONS in language/test-infra
     while !quit.load(Ordering::Relaxed) {
         if random::<u16>() % 10 == 0 {
             println!(

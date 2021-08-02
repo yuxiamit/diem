@@ -63,6 +63,7 @@ module DiemFramework::Genesis {
         native_schedule: vector<u8>,
         chain_id: u8,
         initial_diem_version: u64,
+        initial_consensus_config: vector<u8>,
     ) {
         DiemAccount::initialize(dr_account, x"00000000000000000000000000000000");
 
