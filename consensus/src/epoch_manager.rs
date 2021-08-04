@@ -52,6 +52,10 @@ use std::{
     time::Duration,
 };
 use futures::channel::mpsc::unbounded;
+use crate::experimental::commit_phase::{CommitPhaseMessageKey, CommitPhaseMessageType};
+use channel::message_queues::QueueStyle;
+use consensus_types::experimental::commit_vote::CommitVote;
+use consensus_types::experimental::commit_decision::CommitDecision;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -93,7 +97,7 @@ pub struct EpochManager {
     safety_rules_manager: SafetyRulesManager,
     processor: Option<RoundProcessor>,
     reconfig_events: diem_channel::Receiver<(), OnChainConfigPayload>,
-    commit_msg_tx: Option<Sender<VerifiedEvent>>,
+    commit_msg_tx: Option<diem_channel::Sender<CommitPhaseMessageKey, VerifiedEvent>,>,
     back_pressure: Arc<AtomicU64>,
 }
 
@@ -360,9 +364,11 @@ impl EpochManager {
             commit_phase_reset_tx,
         );
 
-        let (commit_msg_tx, commit_msg_rx) = channel::new::<VerifiedEvent>(
+        let (commit_msg_tx, commit_msg_rx) =
+            diem_channel::new::<CommitPhaseMessageKey, VerifiedEvent>(
+                QueueStyle::FIFO,
             self.config.channel_size,
-            &counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL,
+            Some(&counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL),
         );
 
         // TODO: reset the previous commit phase
@@ -650,6 +656,30 @@ impl EpochManager {
         Ok(None)
     }
 
+    async fn process_commit_vote(&mut self, commit_vote: Box<CommitVote>) -> anyhow::Result<()> {
+        if let Some(sender) = &self.commit_msg_tx {
+            sender.clone().push(CommitPhaseMessageKey::new(
+                commit_vote.author(),
+                commit_vote.ledger_info().commit_info().round(),
+                CommitPhaseMessageType::CommitVoteType,
+            ), VerifiedEvent::CommitVote(commit_vote))
+        } else {
+            bail!("Commit Phase not started but received Commit Message (CommitVote/CommitDecision)");
+        }
+    }
+
+    async fn process_commit_decision(&mut self, commit_decision: Box<CommitDecision>) -> anyhow::Result<()> {
+        if let Some(sender) = &self.commit_msg_tx {
+            sender.clone().push(CommitPhaseMessageKey::new(
+                commit_decision.author(),
+                commit_decision.ledger_info().commit_info().round(),
+                CommitPhaseMessageType::CommitDecisionType,
+            ), VerifiedEvent::CommitDecision(commit_decision))
+        } else {
+            bail!("Commit Phase not started but received Commit Message (CommitVote/CommitDecision)");
+        }
+    }
+
     async fn process_event(
         &mut self,
         peer_id: AccountAddress,
@@ -683,18 +713,11 @@ impl EpochManager {
                     "process_sync_info",
                     p.process_sync_info_msg(*sync_info, peer_id).await
                 ),
-                verified_event @ VerifiedEvent::CommitVote(_)
-                | verified_event @ VerifiedEvent::CommitDecision(_) => {
-                    if let Some(sender) = &self.commit_msg_tx {
-                        sender.clone().send(verified_event).await.map_err(|err| {
-                            anyhow!(
-                                "Error in Passing Commit Message (CommitVote/CommitDecision): {}",
-                                err
-                            )
-                        })
-                    } else {
-                        bail!("Commit Phase not started but received Commit Message (CommitVote/CommitDecision)");
-                    }
+                VerifiedEvent::CommitVote(cv) => {
+                    self.process_commit_vote(cv).await
+                }
+                VerifiedEvent::CommitDecision(cd) => {
+                    self.process_commit_decision(cd).await
                 }
             },
         }

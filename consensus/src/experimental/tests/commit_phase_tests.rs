@@ -10,7 +10,7 @@ use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
 use std::sync::Arc;
 
 use crate::{metrics_safety_rules::MetricsSafetyRules, network_interface::ConsensusMsg};
-use channel::{Receiver, Sender};
+use channel::{Receiver, Sender, diem_channel};
 use diem_infallible::Mutex;
 use futures::{SinkExt, StreamExt};
 
@@ -54,6 +54,7 @@ use crate::experimental::{
 };
 use futures::channel::{oneshot, mpsc::UnboundedReceiver};
 use tokio::runtime::Runtime;
+use crate::experimental::commit_phase::CommitPhaseMessageKey;
 
 const TEST_CHANNEL_SIZE: usize = 30;
 
@@ -95,7 +96,7 @@ fn generate_random_commit_decision(signer: &ValidatorSigner) -> CommitDecision {
 
     dummy_ledger_info_with_sig.add_signature(signer.author(), signer.sign(&dummy_ledger_info));
 
-    CommitDecision::new(dummy_ledger_info_with_sig)
+    CommitDecision::new(signer.author(),dummy_ledger_info_with_sig)
 }
 
 mod commit_phase_e2e_tests {
@@ -197,7 +198,7 @@ mod commit_phase_e2e_tests {
                     signatures.insert(commit_vote.author(), commit_vote.signature().clone());
                     // construct a good commit decision from request
                     let commit_decision = VerifiedEvent::CommitDecision(Box::new(
-                        CommitDecision::new(LedgerInfoWithSignatures::new(
+                        CommitDecision::new(signer.author(), LedgerInfoWithSignatures::new(
                             commit_vote.ledger_info().clone(),
                             signatures,
                         )),
@@ -472,7 +473,7 @@ mod commit_phase_e2e_tests {
             // send a bad commit decision with inconsistent block info
             msg_tx
                 .send(VerifiedEvent::CommitDecision(Box::new(
-                    CommitDecision::new(LedgerInfoWithSignatures::new(
+                    CommitDecision::new(signer.author(), LedgerInfoWithSignatures::new(
                         li_sig_prime.ledger_info().clone(),
                         BTreeMap::<AccountAddress, Ed25519Signature>::new(),
                     )),

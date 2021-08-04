@@ -14,6 +14,7 @@ use std::{
     collections::{vec_deque::VecDeque, HashMap, HashSet},
     sync::Arc,
 };
+use diem_types::block_info::BlockInfo;
 
 /// This structure is a wrapper of [`ExecutedBlock`](crate::consensus_types::block::ExecutedBlock)
 /// that adds `children` field to know the parent-child relationship between blocks.
@@ -136,6 +137,14 @@ impl BlockTree {
     // This method will only be used in this module.
     fn get_linkable_block_mut(&mut self, block_id: &HashValue) -> Option<&mut LinkableBlock> {
         self.id_to_block.get_mut(block_id)
+    }
+
+    pub fn get_all_quorum_certs_with_commit_info(&self) -> Vec<QuorumCert> {
+        return self.id_to_quorum_cert
+            .values()
+            .filter(|qc|qc.commit_info() != &BlockInfo::empty())
+            .map(|qc| (**qc).clone())
+            .collect::<Vec<QuorumCert>>()
     }
 
     // This method will only be used in this module.

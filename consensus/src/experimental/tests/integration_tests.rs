@@ -108,8 +108,12 @@ fn decoupled_execution_integration() {
         match self_loop_rx.next().await {
             Some(Event::Message(_, msg)) => {
                 let event: UnverifiedEvent = msg.into();
+                let verified_event = event.verify(&validator).unwrap();
+
                 // verify the message and send the message into self loop
-                msg_tx.send(event.verify(&validator).unwrap()).await.ok();
+                msg_tx.push(
+
+                ).await.ok();
             }
             _ => {
                 panic!("We are expecting a commit vote message.");

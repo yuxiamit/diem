@@ -253,11 +253,33 @@ impl BlockStore {
         assert_eq!(
             blocks.first().expect("should have at least 3-chain").id(),
             highest_ordered_cert.certified_block().id(),
+            "Expecting in the retrieval response, first block should be {}, but got {}",
+            highest_ordered_cert.certified_block().id(),
+            blocks.first().expect("should have at least 3-chain").id(),
+        );
+
+        assert_eq!(
+            blocks.first().expect("should have at least 3-chain").round(),
+            highest_ordered_cert.certified_block().round(),
+            "Expecting in the retrieval response, first block round should be {}, but got round {}",
+            highest_ordered_cert.certified_block().round(),
+            blocks.first().expect("should have at least 3-chain").round(),
         );
 
         assert_eq!(
             blocks.last().expect("should have at least 3-chain").id(),
             highest_ledger_info.commit_info().id(),
+            "Expecting in the retrieval response, last block should be {}, but got {}",
+            highest_ledger_info.commit_info().id(),
+            blocks.last().expect("should have at least 3-chain").id(),
+        );
+
+        assert_eq!(
+            blocks.last().expect("should have at least 3-chain").round(),
+            highest_ledger_info.commit_info().round(),
+            "Expecting in the retrieval response, last block round should be {}, but got round {}",
+            highest_ledger_info.commit_info().round(),
+            blocks.last().expect("should have at least 3-chain").round(),
         );
 
         // although unlikely, we might wrap num_blocks around on a 32-bit machine
