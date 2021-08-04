@@ -298,10 +298,11 @@ pub static DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL: Lazy<IntGauge> = Lazy::new
 
 /// Counter for the decoupling execution channel of commit messages
 /// from epoch_manager to commit phase
-pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
-    register_int_gauge!(
+pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL:  Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
         "diem_decoupled_execution__commit_message_channel",
-        "Number of pending commit phase messages (CommitVote/CommitDecision)"
+        "Number of pending commit phase messages (CommitVote/CommitDecision)",
+        &["message_key"]
     )
     .unwrap()
 });

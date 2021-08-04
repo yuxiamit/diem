@@ -6,7 +6,7 @@ use crate::{
     network::NetworkSender, network_interface::ConsensusMsg, round_manager::VerifiedEvent,
     state_replication::StateComputer,
 };
-use channel::{Receiver, Sender};
+use channel::{Receiver, Sender, diem_channel};
 use consensus_types::{
     common::Author,
     executed_block::ExecutedBlock,
@@ -40,6 +40,7 @@ use anyhow::anyhow;
 
 use diem_types::epoch_change::EpochChangeProof;
 use futures::{channel::oneshot, prelude::stream::FusedStream};
+use futures::channel::mpsc::UnboundedReceiver;
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -59,6 +60,28 @@ pub struct CommitChannelType(
     pub LedgerInfoWithSignatures,
     pub StateComputerCommitCallBackType,
 );
+
+#[derive(Eq, PartialEq, Hash, Clone)]
+pub enum CommitPhaseMessageType {
+    CommitVoteType, CommitDecisionType
+}
+
+#[derive(Eq, PartialEq, Hash, Clone)]
+pub struct CommitPhaseMessageKey {
+    pub author: AccountAddress,
+    pub round: u64,
+    pub message_type: CommitPhaseMessageType,
+}
+
+impl CommitPhaseMessageKey {
+    pub fn new(author: AccountAddress, round: u64, message_type: CommitPhaseMessageType) -> Self {
+        Self {
+            author,
+            round,
+            message_type,
+        }
+    }
+}
 
 impl std::fmt::Debug for CommitChannelType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -142,7 +165,7 @@ pub struct CommitPhase {
     commit_channel_recv: Receiver<CommitChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
     blocks: Option<PendingBlocks>,
-    commit_msg_rx: channel::Receiver<VerifiedEvent>,
+    commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
     verifier: ValidatorVerifier,
     safety_rules: Arc<Mutex<MetricsSafetyRules>>,
     author: Author,
@@ -194,7 +217,7 @@ async fn sleep_and_retry(
     time::sleep(time::Duration::from_secs(COMMIT_PHASE_TIMEOUT_SEC)).await;
     report_err!(
         notification.send(commit_phase_timeout_event).await,
-        "Error in sending timeout events to retry broacasting commit vote"
+        "Error in sending timeout events"
     )
 }
 
@@ -202,7 +225,7 @@ impl CommitPhase {
     pub fn new(
         commit_channel_recv: Receiver<CommitChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
-        commit_msg_rx: channel::Receiver<VerifiedEvent>,
+        commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
         verifier: ValidatorVerifier,
         safety_rules: Arc<Mutex<MetricsSafetyRules>>,
         author: Author,
@@ -291,7 +314,7 @@ impl CommitPhase {
                 // save the time of other nodes.
                 self.network_sender
                     .broadcast(ConsensusMsg::CommitDecisionMsg(Box::new(
-                        CommitDecision::new(pending_blocks.ledger_info_sig().clone()),
+                        CommitDecision::new(self.author, pending_blocks.ledger_info_sig().clone()),
                     )))
                     .await;
 
@@ -480,7 +503,7 @@ impl CommitPhase {
             // if we are still collecting the signatures
             tokio::select! {
                 // process messages dispatched from epoch_manager
-                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() => {
+                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
                         match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
