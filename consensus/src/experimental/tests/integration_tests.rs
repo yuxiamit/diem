@@ -32,15 +32,13 @@ use crate::{
 };
 use consensus_types::executed_block::ExecutedBlock;
 use executor_types::StateComputeResult;
-use futures::channel::oneshot;
-use futures::channel::mpsc::unbounded;
+use futures::channel::{mpsc::unbounded, oneshot};
 
 #[test]
 fn decoupled_execution_integration() {
     let mut runtime = consensus_runtime();
 
-    let (execution_phase_tx, execution_phase_rx) =
-        unbounded::<ExecutionChannelType>();
+    let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<oneshot::Sender<ResetAck>>(1);
@@ -108,12 +106,8 @@ fn decoupled_execution_integration() {
         match self_loop_rx.next().await {
             Some(Event::Message(_, msg)) => {
                 let event: UnverifiedEvent = msg.into();
-                let verified_event = event.verify(&validator).unwrap();
-
                 // verify the message and send the message into self loop
-                msg_tx.push(
-
-                ).await.ok();
+                msg_tx.send(event.verify(&validator).unwrap()).await.ok();
             }
             _ => {
                 panic!("We are expecting a commit vote message.");

@@ -4,7 +4,9 @@
 use crate::{
     block_storage::BlockStore,
     experimental::{
-        commit_phase::{CommitChannelType, CommitPhase},
+        commit_phase::{
+            CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
+        },
         execution_phase::{ExecutionChannelType, ResetAck},
         ordering_state_computer::OrderingStateComputer,
     },
@@ -38,7 +40,14 @@ use diem_types::{
     waypoint::Waypoint,
 };
 use executor_types::StateComputeResult;
-use futures::channel::oneshot;
+use futures::{
+    channel::{
+        mpsc::{unbounded, UnboundedReceiver},
+        oneshot,
+    },
+    prelude::stream::FusedStream,
+    StreamExt,
+};
 use network::{
     peer_manager::{ConnectionRequestSender, PeerManagerRequestSender},
     protocols::network::{Event, NewNetworkSender},
@@ -49,10 +58,6 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 use tokio::runtime::Runtime;
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-use crate::experimental::commit_phase::{CommitPhaseMessageKey, CommitPhaseMessageType};
-use futures::prelude::stream::FusedStream;
-use futures::StreamExt;
 
 pub fn prepare_commit_phase_with_block_store_state_computer(
     runtime: &Runtime,
@@ -112,8 +117,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     let (self_loop_tx, self_loop_rx) = channel::new_test(1000);
     let network = NetworkSender::new(author, network_sender, self_loop_tx, validators);
 
-    let (commit_result_tx, commit_result_rx) =
-        unbounded::<ExecutionChannelType>();
+    let (commit_result_tx, commit_result_rx) = unbounded::<ExecutionChannelType>();
 
     // Note: we assume no OrderingStateComputer::sync_to will be called during the test
     // OrderingStateComputer::sync_to might block the inner state computer
@@ -171,28 +175,42 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
             if let Some(ve) = msg_proxy_rx.next().await {
                 match ve {
                     VerifiedEvent::CommitVote(cv) => {
-                        msg_tx.push(CommitPhaseMessageKey::new(
-                            cv.author(),
-                            cv.round(),
-                            CommitPhaseMessageType::CommitVoteType,
-                        ), VerifiedEvent::CommitVote(cv))
+                        msg_tx
+                            .push(
+                                CommitPhaseMessageKey::new(
+                                    cv.author(),
+                                    cv.round(),
+                                    CommitPhaseMessageType::CommitVoteType,
+                                ),
+                                VerifiedEvent::CommitVote(cv),
+                            )
+                            .ok();
                     }
                     VerifiedEvent::CommitDecision(cd) => {
-                        msg_tx.push(CommitPhaseMessageKey::new(
-                            cd.author(),
-                            cd.round(),
-                            CommitPhaseMessageType::CommitDecisionType,
-                        ), VerifiedEvent::CommitDecision(cd))
+                        msg_tx
+                            .push(
+                                CommitPhaseMessageKey::new(
+                                    cd.author(),
+                                    cd.round(),
+                                    CommitPhaseMessageType::CommitDecisionType,
+                                ),
+                                VerifiedEvent::CommitDecision(cd),
+                            )
+                            .ok();
                     }
-                    _ => { unimplemented!() }
+                    _ => {
+                        unimplemented!()
+                    }
                 }
-            } else { break }
+            } else {
+                break;
+            }
         }
     });
 
     (
         commit_tx,             // channel to pass executed blocks into the commit phase
-        msg_proxy_tx,                // channel to pass commit messages into the commit phase
+        msg_proxy_tx,          // channel to pass commit messages into the commit phase
         commit_phase_reset_tx, // channel to send reset events
         commit_result_rx,      // channel to receive commit result from the commit phase
         self_loop_rx,          // channel to receive message from the commit phase itself

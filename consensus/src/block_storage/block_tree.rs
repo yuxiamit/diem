@@ -6,15 +6,14 @@ use anyhow::bail;
 use consensus_types::{
     executed_block::ExecutedBlock, quorum_cert::QuorumCert, timeout_certificate::TimeoutCertificate,
 };
-use diem_crypto::HashValue;
+use diem_crypto::{hash::ACCUMULATOR_PLACEHOLDER_HASH, HashValue};
 use diem_logger::prelude::*;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
+use diem_types::{block_info::BlockInfo, ledger_info::LedgerInfoWithSignatures};
 use mirai_annotations::{checked_verify_eq, precondition};
 use std::{
     collections::{vec_deque::VecDeque, HashMap, HashSet},
     sync::Arc,
 };
-use diem_types::block_info::BlockInfo;
 
 /// This structure is a wrapper of [`ExecutedBlock`](crate::consensus_types::block::ExecutedBlock)
 /// that adds `children` field to know the parent-child relationship between blocks.
@@ -99,6 +98,7 @@ impl BlockTree {
             root_ordered_cert.commit_info().id(),
             "inconsistent root and ledger info"
         );
+
         let root_id = root.id();
 
         let mut id_to_block = HashMap::new();
@@ -140,11 +140,12 @@ impl BlockTree {
     }
 
     pub fn get_all_quorum_certs_with_commit_info(&self) -> Vec<QuorumCert> {
-        return self.id_to_quorum_cert
+        return self
+            .id_to_quorum_cert
             .values()
-            .filter(|qc|qc.commit_info() != &BlockInfo::empty())
+            .filter(|qc| qc.commit_info() != &BlockInfo::empty())
             .map(|qc| (**qc).clone())
-            .collect::<Vec<QuorumCert>>()
+            .collect::<Vec<QuorumCert>>();
     }
 
     // This method will only be used in this module.

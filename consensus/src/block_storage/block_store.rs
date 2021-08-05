@@ -205,12 +205,19 @@ impl BlockStore {
         // reproduce the same batches (important for the commit phase)
 
         let mut certs = self.inner.read().get_all_quorum_certs_with_commit_info();
-        certs.sort_unstable_by(|qc1, qc2| qc1.commit_info().round().cmp(&qc2.commit_info().round()));
+        certs
+            .sort_unstable_by(|qc1, qc2| qc1.commit_info().round().cmp(&qc2.commit_info().round()));
 
         for qc in certs {
             if qc.vote_data().parent().id() != qc.vote_data().proposed().id() {
-                info!("trying to commit to round {}", qc.commit_info().round());
-                self.commit(qc.ledger_info().clone()).await;
+                info!(
+                    "trying to commit to round {} with ledger info {}",
+                    qc.commit_info().round(),
+                    qc.ledger_info()
+                );
+                if let Err(e) = self.commit(qc.ledger_info().clone()).await {
+                    error!("Error in try-committing blocks. {}", e.to_string());
+                }
             }
         }
 
@@ -363,20 +370,22 @@ impl BlockStore {
                         );
                     },
                 ),
-                Some(Box::new(move |parent_block_id, block|{
-                    let res =
-                        retry_execute_from_root(
-                            parent_block_id,
-                            block,
-                            block_tree_in_execution_failure_callback,
-                            state_computer,
-                        );
+                Some(Box::new(move |parent_block_id, block| {
+                    let res = retry_execute_from_root(
+                        parent_block_id,
+                        block,
+                        block_tree_in_execution_failure_callback,
+                        state_computer,
+                    );
                     if let Err(e) = res {
                         // we do not need to retry again because the normal path
                         // in block_store::execute_and_insert_block only retry once and just return
                         // to upper level (all the way to epoch_manager) and document the error.
                         counters::ERROR_COUNT.inc();
-                        error!(error = e.to_string(), "Retry execution attempt fails again. Giving up..");
+                        error!(
+                            error = e.to_string(),
+                            "Retry execution attempt fails again. Giving up.."
+                        );
                     }
                 })),
             )
@@ -603,6 +612,12 @@ impl BlockReader for BlockStore {
     }
 
     fn sync_info(&self) -> SyncInfo {
+        /*
+        assert_ne!(
+            self.highest_ledger_info().commit_info().executed_state_id(),
+            *ACCUMULATOR_PLACEHOLDER_HASH
+        );
+        */
         SyncInfo::new_decoupled(
             self.highest_quorum_cert().as_ref().clone(),
             self.highest_ordered_cert().as_ref().clone(),

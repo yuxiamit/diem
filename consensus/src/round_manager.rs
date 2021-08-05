@@ -345,6 +345,12 @@ impl RoundManager {
             Block::new_proposal_from_block_data_and_signature(proposal, signature);
         observe_block(signed_proposal.timestamp_usecs(), BlockStage::SIGNED);
         debug!(self.new_log(LogEvent::Propose), "{}", signed_proposal);
+
+        debug!(
+            "I'm generating a proposal with sync info {}",
+            self.block_store.sync_info()
+        );
+
         // return proposal
         Ok(ProposalMsg::new(
             signed_proposal,
@@ -364,6 +370,8 @@ impl RoundManager {
             proposal_msg.proposal().timestamp_usecs(),
             BlockStage::RECEIVED,
         );
+
+        // debug!("process proposal msg {}", proposal_msg);
         if self
             .ensure_round_and_sync_up(
                 proposal_msg.proposal().round(),
@@ -393,7 +401,7 @@ impl RoundManager {
         help_remote: bool,
     ) -> anyhow::Result<()> {
         let local_sync_info = self.block_store.sync_info();
-        debug!("called local_sync_info with {}, local {}", sync_info, local_sync_info);
+        // debug!("called local_sync_info with {}, local {}, from {}", sync_info, local_sync_info, author);
         if help_remote && local_sync_info.has_newer_certificates(&sync_info) {
             counters::SYNC_INFO_MSGS_SENT_COUNT.inc();
             debug!(
@@ -420,7 +428,7 @@ impl RoundManager {
                     );
                     VerifyError::from(e)
                 })?;
-            debug!("Sync Info passed verification");
+            // debug!("Sync Info passed verification");
             let result = self
                 .block_store
                 .add_certs(sync_info, self.create_block_retriever(author))
@@ -624,7 +632,10 @@ impl RoundManager {
         debug!(self.new_log(LogEvent::Vote).remote_peer(author), "{}", vote);
 
         self.round_state.record_vote(vote.clone());
+        //debug!("I am generating a vote message with sync info {}", self.block_store.sync_info());
+
         let vote_msg = VoteMsg::new(vote, self.block_store.sync_info());
+        //debug!("My vote message: {}", vote_msg);
         self.network.send_vote(vote_msg, vec![recipients]).await;
         Ok(())
     }
@@ -696,6 +707,9 @@ impl RoundManager {
         fail_point!("consensus::process_vote_msg", |_| {
             Err(anyhow::anyhow!("Injected error in process_vote_msg"))
         });
+
+        //debug!("process vote {}", vote_msg);
+
         // Check whether this validator is a valid recipient of the vote.
         if self
             .ensure_round_and_sync_up(
