@@ -22,19 +22,22 @@ use crate::{
 use consensus_types::{executed_block::ExecutedBlock, quorum_cert::QuorumCert};
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{account_address::AccountAddress, validator_signer::ValidatorSigner};
-use futures::{channel::oneshot, StreamExt};
+use futures::{
+    channel::{
+        mpsc::{unbounded, UnboundedReceiver},
+        oneshot,
+    },
+    StreamExt,
+};
 use rand::Rng;
 use std::collections::BTreeMap;
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 
-pub fn prepare_ordering_state_computer(
-) -> (
+pub fn prepare_ordering_state_computer() -> (
     Arc<OrderingStateComputer>,
     UnboundedReceiver<ExecutionChannelType>,
     Receiver<oneshot::Sender<ResetAck>>,
 ) {
-    let (commit_result_tx, commit_result_rx) =
-        unbounded::<ExecutionChannelType>();
+    let (commit_result_tx, commit_result_rx) = unbounded::<ExecutionChannelType>();
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<oneshot::Sender<ResetAck>>(1);
     let state_computer = Arc::new(OrderingStateComputer::new(

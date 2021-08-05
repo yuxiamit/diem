@@ -6,7 +6,9 @@ use crate::{
     counters,
     error::{error_kind, DbError},
     experimental::{
-        commit_phase::{CommitChannelType, CommitPhase},
+        commit_phase::{
+            CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
+        },
         execution_phase::{ExecutionChannelType, ExecutionPhase, ResetAck},
         ordering_state_computer::OrderingStateComputer,
     },
@@ -28,10 +30,11 @@ use crate::{
     util::time_service::TimeService,
 };
 use anyhow::{anyhow, bail, ensure, Context};
-use channel::{diem_channel, Sender};
+use channel::{diem_channel, message_queues::QueueStyle, Sender};
 use consensus_types::{
     common::{Author, Round},
     epoch_retrieval::EpochRetrievalRequest,
+    experimental::{commit_decision::CommitDecision, commit_vote::CommitVote},
 };
 use diem_config::config::{ConsensusConfig, ConsensusProposerType, NodeConfig};
 use diem_infallible::{duration_since_epoch, Mutex};
@@ -43,7 +46,10 @@ use diem_types::{
     epoch_state::EpochState,
     on_chain_config::{OnChainConfigPayload, ValidatorSet},
 };
-use futures::{channel::oneshot, select, SinkExt, StreamExt};
+use futures::{
+    channel::{mpsc::unbounded, oneshot},
+    select, SinkExt, StreamExt,
+};
 use network::protocols::network::Event;
 use safety_rules::SafetyRulesManager;
 use std::{
@@ -51,11 +57,6 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
-use futures::channel::mpsc::unbounded;
-use crate::experimental::commit_phase::{CommitPhaseMessageKey, CommitPhaseMessageType};
-use channel::message_queues::QueueStyle;
-use consensus_types::experimental::commit_vote::CommitVote;
-use consensus_types::experimental::commit_decision::CommitDecision;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -97,7 +98,7 @@ pub struct EpochManager {
     safety_rules_manager: SafetyRulesManager,
     processor: Option<RoundProcessor>,
     reconfig_events: diem_channel::Receiver<(), OnChainConfigPayload>,
-    commit_msg_tx: Option<diem_channel::Sender<CommitPhaseMessageKey, VerifiedEvent>,>,
+    commit_msg_tx: Option<diem_channel::Sender<CommitPhaseMessageKey, VerifiedEvent>>,
     back_pressure: Arc<AtomicU64>,
 }
 
@@ -308,10 +309,7 @@ impl EpochManager {
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         network_sender: NetworkSender,
     ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase)> {
-        let (
-            execution_phase_tx,
-            execution_phase_rx
-        ) = unbounded::<ExecutionChannelType>();
+        let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
         let (execution_phase_reset_tx, execution_phase_reset_rx) =
             channel::new::<oneshot::Sender<ResetAck>>(
@@ -367,9 +365,9 @@ impl EpochManager {
         let (commit_msg_tx, commit_msg_rx) =
             diem_channel::new::<CommitPhaseMessageKey, VerifiedEvent>(
                 QueueStyle::FIFO,
-            self.config.channel_size,
-            Some(&counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL),
-        );
+                self.config.channel_size,
+                Some(&counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL),
+            );
 
         // TODO: reset the previous commit phase
 
@@ -658,25 +656,38 @@ impl EpochManager {
 
     async fn process_commit_vote(&mut self, commit_vote: Box<CommitVote>) -> anyhow::Result<()> {
         if let Some(sender) = &self.commit_msg_tx {
-            sender.clone().push(CommitPhaseMessageKey::new(
-                commit_vote.author(),
-                commit_vote.ledger_info().commit_info().round(),
-                CommitPhaseMessageType::CommitVoteType,
-            ), VerifiedEvent::CommitVote(commit_vote))
+            sender.clone().push(
+                CommitPhaseMessageKey::new(
+                    commit_vote.author(),
+                    commit_vote.ledger_info().commit_info().round(),
+                    CommitPhaseMessageType::CommitVoteType,
+                ),
+                VerifiedEvent::CommitVote(commit_vote),
+            )
         } else {
-            bail!("Commit Phase not started but received Commit Message (CommitVote/CommitDecision)");
+            bail!(
+                "Commit Phase not started but received Commit Message (CommitVote/CommitDecision)"
+            );
         }
     }
 
-    async fn process_commit_decision(&mut self, commit_decision: Box<CommitDecision>) -> anyhow::Result<()> {
+    async fn process_commit_decision(
+        &mut self,
+        commit_decision: Box<CommitDecision>,
+    ) -> anyhow::Result<()> {
         if let Some(sender) = &self.commit_msg_tx {
-            sender.clone().push(CommitPhaseMessageKey::new(
-                commit_decision.author(),
-                commit_decision.ledger_info().commit_info().round(),
-                CommitPhaseMessageType::CommitDecisionType,
-            ), VerifiedEvent::CommitDecision(commit_decision))
+            sender.clone().push(
+                CommitPhaseMessageKey::new(
+                    commit_decision.author(),
+                    commit_decision.ledger_info().commit_info().round(),
+                    CommitPhaseMessageType::CommitDecisionType,
+                ),
+                VerifiedEvent::CommitDecision(commit_decision),
+            )
         } else {
-            bail!("Commit Phase not started but received Commit Message (CommitVote/CommitDecision)");
+            bail!(
+                "Commit Phase not started but received Commit Message (CommitVote/CommitDecision)"
+            );
         }
     }
 
@@ -713,12 +724,8 @@ impl EpochManager {
                     "process_sync_info",
                     p.process_sync_info_msg(*sync_info, peer_id).await
                 ),
-                VerifiedEvent::CommitVote(cv) => {
-                    self.process_commit_vote(cv).await
-                }
-                VerifiedEvent::CommitDecision(cd) => {
-                    self.process_commit_decision(cd).await
-                }
+                VerifiedEvent::CommitVote(cv) => self.process_commit_vote(cv).await,
+                VerifiedEvent::CommitDecision(cd) => self.process_commit_decision(cd).await,
             },
         }
     }

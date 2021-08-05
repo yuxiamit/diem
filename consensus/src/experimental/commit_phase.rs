@@ -6,7 +6,7 @@ use crate::{
     network::NetworkSender, network_interface::ConsensusMsg, round_manager::VerifiedEvent,
     state_replication::StateComputer,
 };
-use channel::{Receiver, Sender, diem_channel};
+use channel::{diem_channel, Receiver, Sender};
 use consensus_types::{
     common::Author,
     executed_block::ExecutedBlock,
@@ -39,8 +39,10 @@ use crate::{
 use anyhow::anyhow;
 
 use diem_types::epoch_change::EpochChangeProof;
-use futures::{channel::oneshot, prelude::stream::FusedStream};
-use futures::channel::mpsc::UnboundedReceiver;
+use futures::{
+    channel::{mpsc::UnboundedReceiver, oneshot},
+    prelude::stream::FusedStream,
+};
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -63,7 +65,8 @@ pub struct CommitChannelType(
 
 #[derive(Eq, PartialEq, Hash, Clone)]
 pub enum CommitPhaseMessageType {
-    CommitVoteType, CommitDecisionType
+    CommitVoteType,
+    CommitDecisionType,
 }
 
 #[derive(Eq, PartialEq, Hash, Clone)]
@@ -312,6 +315,7 @@ impl CommitPhase {
             if pending_blocks.verify(&self.verifier).is_ok() {
                 // asynchronously broadcast the commit decision first to
                 // save the time of other nodes.
+
                 self.network_sender
                     .broadcast(ConsensusMsg::CommitDecisionMsg(Box::new(
                         CommitDecision::new(self.author, pending_blocks.ledger_info_sig().clone()),

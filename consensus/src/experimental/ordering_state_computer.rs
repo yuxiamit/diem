@@ -9,12 +9,12 @@ use anyhow::Result;
 use channel::Sender;
 use consensus_types::{block::Block, executed_block::ExecutedBlock};
 use diem_crypto::HashValue;
+use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::{Error as ExecutionError, StateComputeResult};
 use fail::fail_point;
-use futures::SinkExt;
+use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use std::{boxed::Box, sync::Arc};
-use futures::channel::mpsc::UnboundedSender;
 
 use crate::{
     experimental::{
@@ -24,7 +24,6 @@ use crate::{
     state_replication::StateComputerCommitCallBackType,
 };
 use futures::channel::oneshot;
-
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
@@ -100,6 +99,12 @@ impl StateComputer for OrderingStateComputer {
         fail_point!("consensus::sync_to", |_| {
             Err(anyhow::anyhow!("Injected error in sync_to").into())
         });
+
+        debug!(
+            "ordering state computer sync to with target {}",
+            target.clone()
+        );
+
         self.state_computer_for_sync.sync_to(target).await?;
 
         // reset execution phase and commit phase

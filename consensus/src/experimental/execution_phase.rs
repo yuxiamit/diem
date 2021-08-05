@@ -11,9 +11,11 @@ use diem_crypto::HashValue;
 use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
-use futures::{channel::oneshot, select, FutureExt, SinkExt, StreamExt};
+use futures::{
+    channel::{mpsc::UnboundedReceiver, oneshot},
+    select, FutureExt, SinkExt, StreamExt,
+};
 use std::sync::Arc;
-use futures::channel::mpsc::UnboundedReceiver;
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from

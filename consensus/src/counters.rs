@@ -30,7 +30,7 @@ pub static LAST_ORDERED_ROUND: Lazy<IntGauge> = Lazy::new(|| {
         "diem_consensus_last_ordered_round",
         "This counter is set to the round of the highest ordered block."
     )
-        .unwrap()
+    .unwrap()
 });
 
 /// This counter is set to the round of the highest committed block.
@@ -298,7 +298,7 @@ pub static DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL: Lazy<IntGauge> = Lazy::new
 
 /// Counter for the decoupling execution channel of commit messages
 /// from epoch_manager to commit phase
-pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL:  Lazy<IntCounterVec> = Lazy::new(|| {
+pub static DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL: Lazy<IntCounterVec> = Lazy::new(|| {
     register_int_counter_vec!(
         "diem_decoupled_execution__commit_message_channel",
         "Number of pending commit phase messages (CommitVote/CommitDecision)",

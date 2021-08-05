@@ -9,7 +9,7 @@ use crate::{
     persistent_liveness_storage::{PersistentLivenessStorage, RecoveryData},
     state_replication::StateComputer,
 };
-use anyhow::{bail, format_err};
+use anyhow::{anyhow, bail, format_err};
 
 use consensus_types::{
     block::Block,
@@ -25,10 +25,11 @@ use diem_types::{
     ledger_info::LedgerInfoWithSignatures,
 };
 
+use diem_config::config::DEFAULT_BACK_PRESSURE_LIMIT;
+use diem_crypto::hash::ACCUMULATOR_PLACEHOLDER_HASH;
 use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
 use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
-use diem_config::config::DEFAULT_BACK_PRESSURE_LIMIT;
 
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
@@ -61,11 +62,11 @@ impl BlockStore {
         // if sync to this node really helps and ..
         self.commit_root().round() < li.commit_info().round()
             && (
-            // we are in sync only mode, or ..
-            self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= self.ordered_root().round() || // if at sync only
+                // we are in sync only mode, or ..
+                self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= self.ordered_root().round() || // if at sync only
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
-        )
+            )
         /*
         !(self.commit_root().round() + 5 >= self.ordered_root().round() ||
             self.commit_root().round() >= li.commit_info().round())
@@ -189,12 +190,14 @@ impl BlockStore {
         highest_ledger_info: LedgerInfoWithSignatures,
         retriever: &mut BlockRetriever,
     ) -> anyhow::Result<()> {
-
-        debug!("sync_to_highest_ordered_cert HLI:{}, ordered_root_round: {} commit_root_round: {}",
+        /*
+        debug!("sync_to_highest_ordered_cert HLI:{}, self.HLI {}, ordered_root_round: {} commit_root_round: {}",
             highest_ledger_info,
+            self.inner.read().highest_ledger_info(),
             self.ordered_root().round(),
             self.commit_root().round(),
         );
+        */
 
         if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info) {
             return Ok(());
@@ -242,11 +245,14 @@ impl BlockStore {
 
         debug!(
             LogSchema::new(LogEvent::StateSync).remote_peer(retriever.preferred_peer),
-            "Start state sync with peer to block: {}, plan to fetch {} blocks",
-            highest_ordered_cert.commit_info(), num_blocks,
+            "Start state sync with peer to block: {}, plan to fetch {} blocks, from round {} to {}",
+            highest_ordered_cert.commit_info(),
+            num_blocks,
+            highest_ledger_info.ledger_info().round(),
+            highest_ordered_cert.certified_block().round()
         );
 
-        let blocks = retriever
+        let mut blocks = retriever
             .retrieve_block_for_qc(highest_ordered_cert, num_blocks)
             .await?;
 
@@ -259,55 +265,54 @@ impl BlockStore {
         );
 
         assert_eq!(
-            blocks.first().expect("should have at least 3-chain").round(),
+            blocks
+                .first()
+                .expect("should have at least 3-chain")
+                .round(),
             highest_ordered_cert.certified_block().round(),
             "Expecting in the retrieval response, first block round should be {}, but got round {}",
             highest_ordered_cert.certified_block().round(),
-            blocks.first().expect("should have at least 3-chain").round(),
-        );
-
-        assert_eq!(
-            blocks.last().expect("should have at least 3-chain").id(),
-            highest_ledger_info.commit_info().id(),
-            "Expecting in the retrieval response, last block should be {}, but got {}",
-            highest_ledger_info.commit_info().id(),
-            blocks.last().expect("should have at least 3-chain").id(),
-        );
-
-        assert_eq!(
-            blocks.last().expect("should have at least 3-chain").round(),
-            highest_ledger_info.commit_info().round(),
-            "Expecting in the retrieval response, last block round should be {}, but got round {}",
-            highest_ledger_info.commit_info().round(),
-            blocks.last().expect("should have at least 3-chain").round(),
-        );
-
-        // although unlikely, we might wrap num_blocks around on a 32-bit machine
-        assert!(num_blocks < std::usize::MAX as u64);
-        let mut quorum_certs = vec![highest_ordered_cert.clone()];
-        quorum_certs.extend(
             blocks
-                .iter()
-                .take(num_blocks as usize - 1)
-                .map(|block| block.quorum_cert().clone()),
+                .first()
+                .expect("should have at least 3-chain")
+                .round(),
         );
-        for (i, block) in blocks.iter().enumerate() {
-            assert_eq!(block.id(), quorum_certs[i].certified_block().id());
+
+        if let Some(end_idx) = blocks
+            .iter()
+            .position(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id())
+        {
+            //blocks = blocks[..end_idx + 1].to_vec(); // trim
+
+            // although unlikely, we might wrap num_blocks around on a 32-bit machine
+            assert!(num_blocks < std::usize::MAX as u64);
+            let mut quorum_certs = vec![highest_ordered_cert.clone()];
+            quorum_certs.extend(
+                blocks
+                    .iter()
+                    .take(num_blocks as usize - 1)
+                    .map(|block| block.quorum_cert().clone()),
+            );
+            for (i, block) in blocks.iter().enumerate() {
+                assert_eq!(block.id(), quorum_certs[i].certified_block().id());
+            }
+
+            // If a node restarts in the middle of state synchronization, it is going to try to catch up
+            // to the stored quorum certs as the new root.
+            storage.save_tree(blocks.clone(), quorum_certs.clone())?;
+            state_computer.sync_to(highest_ledger_info).await?;
+
+            // we do not need to update block_tree.highest_commit_decision_ledger_info here
+            // because the block_tree is going to rebuild itself.
+
+            let recovery_data = storage
+                .start()
+                .expect_recovery_data("Failed to construct recovery data after fast forward sync");
+
+            Ok(recovery_data)
+        } else {
+            Err(anyhow!("Block overfetch not including the target"))
         }
-
-        // If a node restarts in the middle of state synchronization, it is going to try to catch up
-        // to the stored quorum certs as the new root.
-        storage.save_tree(blocks.clone(), quorum_certs.clone())?;
-        state_computer.sync_to(highest_ledger_info).await?;
-
-        // we do not need to update block_tree.highest_commit_decision_ledger_info here
-        // because the block_tree is going to rebuild itself.
-
-        let recovery_data = storage
-            .start()
-            .expect_recovery_data("Failed to construct recovery data after fast forward sync");
-
-        Ok(recovery_data)
     }
 }
 
@@ -342,7 +347,10 @@ impl BlockRetriever {
         peers: &mut Vec<&AccountAddress>,
         num_blocks: u64,
     ) -> anyhow::Result<Vec<Block>> {
-        info!("Retrieving {} blocks starting from {}", num_blocks, block_id);
+        info!(
+            "Retrieving {} blocks starting from {}",
+            num_blocks, block_id
+        );
         let mut attempt = 0_u32;
         let mut progress = 0;
         let mut last_block_id = block_id;
@@ -408,7 +416,11 @@ impl BlockRetriever {
                 }
             }
         }
-        assert_eq!(result_blocks.len() as u64, num_blocks);
+
+        // as we are doing overfetch if there are timeout between the rounds,
+        // the remote might not have this many blocks
+
+        //assert_eq!(result_blocks.len() as u64, num_blocks);
         //info!("fetched blocks {:?}", result_blocks.iter().map(|b| b.id()).collect::<Vec<HashValue>>());
         Ok(result_blocks)
     }

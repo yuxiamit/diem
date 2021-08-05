@@ -22,9 +22,14 @@ use consensus_types::block::block_test_utils::certificate_for_genesis;
 use diem_crypto::{ed25519::Ed25519Signature, hash::ACCUMULATOR_PLACEHOLDER_HASH, HashValue};
 use diem_types::{account_address::AccountAddress, validator_verifier::random_validator_verifier};
 use executor_types::StateComputeResult;
-use futures::{channel::oneshot, SinkExt, StreamExt};
+use futures::{
+    channel::{
+        mpsc::{unbounded, UnboundedSender},
+        oneshot,
+    },
+    SinkExt, StreamExt,
+};
 use std::{collections::BTreeMap, sync::Arc};
-use futures::channel::mpsc::{unbounded, UnboundedSender};
 
 const EXECUTION_PHASE_TEST_CHANNEL_SIZE: usize = 30;
 
@@ -38,8 +43,7 @@ fn prepare_execution_phase() -> (
 ) {
     let channel_size = EXECUTION_PHASE_TEST_CHANNEL_SIZE;
 
-    let (execution_phase_tx, execution_phase_rx) =
-        unbounded::<ExecutionChannelType>();
+    let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<oneshot::Sender<ResetAck>>(1);

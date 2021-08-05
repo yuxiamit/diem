@@ -44,7 +44,7 @@ impl Display for SyncInfo {
             self.highest_certified_round(),
             self.highest_ordered_round(),
             htc_repr,
-            self.highest_ledger_info_round(),
+            self.highest_ledger_info(),
         )
     }
 }
@@ -62,7 +62,6 @@ impl SyncInfo {
 
         let highest_ordered_cert =
             Some(highest_ordered_cert).filter(|hoc| hoc != &highest_quorum_cert);
-        let highest_ledger_info = highest_ledger_info.filter(|hli| hli.commit_info().round() > 0);
 
         Self {
             highest_quorum_cert,
@@ -178,7 +177,9 @@ impl SyncInfo {
             })
             .and_then(|_| {
                 if let Some(hli) = self.highest_ledger_info.as_ref() {
-                    hli.verify_signatures(validator)?;
+                    if hli.commit_info().round() > 0 {
+                        hli.verify_signatures(validator)?;
+                    }
                 }
                 Ok(())
             })
@@ -191,11 +192,6 @@ impl SyncInfo {
     }
 
     pub fn has_newer_certificates(&self, other: &SyncInfo) -> bool {
-        // it is important that HLI has the first priority:
-        // otherwise, consider a node with a qc of round 200, but it has slow execution at HLI 10,
-        // and it was set to be sync_only. So this blocks the sync_up path until the local
-        // qc is smaller than remote qc. However, during sync_only, the node can still
-        // update the local qc through the process_vote path.
         self.highest_ledger_info_round() > other.highest_ledger_info_round()
             || self.highest_certified_round() > other.highest_certified_round()
             || self.highest_timeout_round() > other.highest_timeout_round()
