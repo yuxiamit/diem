@@ -30,6 +30,7 @@ use diem_crypto::hash::ACCUMULATOR_PLACEHOLDER_HASH;
 use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
 use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
+use crate::round_manager::RoundManager;
 
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
@@ -48,6 +49,7 @@ impl BlockStore {
         &self,
         qc: &QuorumCert,
         li: &LedgerInfoWithSignatures,
+        sync_only: bool,
     ) -> bool {
         // This precondition ensures that the check in the following lines
         // does not result in an addition overflow.
@@ -61,12 +63,16 @@ impl BlockStore {
 
         // if sync to this node really helps and ..
         self.commit_root().round() < li.commit_info().round()
-            && (
+
+            && (sync_only ||
+            // we are far behind, or ..
+                self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= li.commit_info().round() ||
                 // we are in sync only mode, or ..
                 self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= self.ordered_root().round() || // if at sync only
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
             )
+
         /*
         !(self.commit_root().round() + 5 >= self.ordered_root().round() ||
             self.commit_root().round() >= li.commit_info().round())
@@ -98,11 +104,14 @@ impl BlockStore {
         &self,
         sync_info: &SyncInfo,
         mut retriever: BlockRetriever,
+        sync_only: bool,
     ) -> anyhow::Result<()> {
+
         self.sync_to_highest_ordered_cert(
             sync_info.highest_ordered_cert().clone(),
             sync_info.highest_ledger_info().clone(),
             &mut retriever,
+            sync_only,
         )
         .await?;
 
@@ -189,6 +198,7 @@ impl BlockStore {
         highest_ordered_cert: QuorumCert,
         highest_ledger_info: LedgerInfoWithSignatures,
         retriever: &mut BlockRetriever,
+        sync_only: bool,
     ) -> anyhow::Result<()> {
         /*
         debug!("sync_to_highest_ordered_cert HLI:{}, self.HLI {}, ordered_root_round: {} commit_root_round: {}",
@@ -199,7 +209,7 @@ impl BlockStore {
         );
         */
 
-        if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info) {
+        if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info, sync_only) {
             return Ok(());
         }
         let (root, root_metadata, blocks, quorum_certs) = Self::fast_forward_sync(
@@ -240,8 +250,7 @@ impl BlockStore {
     ) -> anyhow::Result<RecoveryData> {
         // we fetch the blocks from
         let num_blocks = highest_ordered_cert.certified_block().round()
-            - highest_ledger_info.ledger_info().round()
-            + 1;
+            - highest_ledger_info.ledger_info().round() + 1;
 
         debug!(
             LogSchema::new(LogEvent::StateSync).remote_peer(retriever.preferred_peer),
@@ -278,9 +287,9 @@ impl BlockStore {
                 .round(),
         );
 
-        if let Some(end_idx) = blocks
+        if blocks
             .iter()
-            .position(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id())
+            .position(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id()).is_some()
         {
             //blocks = blocks[..end_idx + 1].to_vec(); // trim
 
@@ -386,7 +395,7 @@ impl BlockRetriever {
                 )
                 .await;
             match response.and_then(|result| {
-                if result.status() == BlockRetrievalStatus::Succeeded {
+                if result.status() == BlockRetrievalStatus::Succeeded || result.status() == BlockRetrievalStatus::NotEnoughBlocks {
                     Ok(result.blocks().clone())
                 } else {
                     Err(format_err!("{:?}", result.status()))

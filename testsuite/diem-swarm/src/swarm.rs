@@ -711,7 +711,7 @@ impl DiemSwarm {
 
         // Now wait for all the nodes to catch up to the max.
         for i in 0..num_attempts {
-            println!(
+            info!( // we want to show the timestamp
                 "{} Wait for catchup, target_commit_round = {}, attempt: {} of {}",
                 log_header,
                 last_committed_round,
@@ -726,7 +726,7 @@ impl DiemSwarm {
 
                 if let Some(val) = node.get_metric(last_committed_round_str) {
                     if val >= last_committed_round {
-                        println!(
+                        info!(
                             "{} \tNode {} is caught up with last committed round {}",
                             log_header,
                             node.node_id(),
@@ -734,7 +734,7 @@ impl DiemSwarm {
                         );
                         *done = true;
                     } else {
-                        println!(
+                        info!(
                             "{} \tNode {} is not caught up yet with last committed round {}",
                             log_header,
                             node.node_id(),
@@ -742,7 +742,7 @@ impl DiemSwarm {
                         );
                     }
                 } else {
-                    println!(
+                    info!(
                         "{} \tNode {} last committed round unknown, assuming 0.",
                         log_header,
                         node.node_id()
