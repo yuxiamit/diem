@@ -21,7 +21,7 @@ use crate::{
     persistent_liveness_storage::{PersistentLivenessStorage, RecoveryData},
     state_replication::{StateComputer, TxnManager},
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use consensus_types::{
     block::Block,
     block_retrieval::{BlockRetrievalResponse, BlockRetrievalStatus},
@@ -48,6 +48,7 @@ use std::{
     time::Duration,
 };
 use termion::color::*;
+use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
 
 #[derive(Serialize, Clone)]
 pub enum UnverifiedEvent {
@@ -179,6 +180,8 @@ impl RecoveryManager {
             sync_info.epoch() == self.epoch_state.epoch,
             "[RecoveryManager] Received sync info is in different epoch than committed block"
         );
+
+
         let mut retriever = BlockRetriever::new(self.network.clone(), peer);
         let recovery_data = BlockStore::fast_forward_sync(
             sync_info.highest_ordered_cert(),
@@ -187,9 +190,10 @@ impl RecoveryManager {
             self.storage.clone(),
             self.state_computer.clone(),
         )
-        .await?;
+            .await?;
 
         Ok(recovery_data)
+
     }
 
     pub fn epoch_state(&self) -> &EpochState {
@@ -431,7 +435,7 @@ impl RoundManager {
             // debug!("Sync Info passed verification");
             let result = self
                 .block_store
-                .add_certs(sync_info, self.create_block_retriever(author))
+                .add_certs(sync_info, self.create_block_retriever(author), self.sync_only())
                 .await;
             self.process_certificates().await?;
             result
