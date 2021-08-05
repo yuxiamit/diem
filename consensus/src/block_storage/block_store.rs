@@ -338,18 +338,16 @@ impl BlockStore {
 
         assert!(!blocks_to_commit.is_empty());
 
-        // prepare values for callback
-        let block_tree_in_commit_callback = self.inner.clone();
-        let block_tree_in_execution_failure_callback = self.inner.clone();
-        let storage = self.storage.clone();
-        let commit_root = self.commit_root();
-        let state_computer = self.state_computer.clone();
-
         self.inner
             .write()
             .update_ordered_root_id(block_to_commit.id());
         update_counters_for_ordered_blocks(&blocks_to_commit);
 
+        // prepare values for callback
+        let block_tree_in_commit_callback = self.inner.clone();
+        let block_tree_in_execution_failure_callback = self.inner.clone();
+        let storage = self.storage.clone();
+        let commit_root_in_commit_callback = self.commit_root().clone();
         // asynchronously execute and commit
         self.state_computer
             .commit(
@@ -364,29 +362,26 @@ impl BlockStore {
                             .update_highest_ledger_info(commit_decision);
                         update_counters_and_prune_blocks(
                             block_tree_in_commit_callback,
-                            storage,
-                            commit_root,
+                            storage.clone(),
+                            commit_root_in_commit_callback,
                             executed_blocks,
                         );
                     },
                 ),
-                Some(Box::new(move |parent_block_id, block| {
-                    let res = retry_execute_from_root(
-                        parent_block_id,
-                        block,
-                        block_tree_in_execution_failure_callback,
-                        state_computer,
-                    );
-                    if let Err(e) = res {
-                        // we do not need to retry again because the normal path
-                        // in block_store::execute_and_insert_block only retry once and just return
-                        // to upper level (all the way to epoch_manager) and document the error.
-                        counters::ERROR_COUNT.inc();
-                        error!(
-                            error = e.to_string(),
-                            "Retry execution attempt fails again. Giving up.."
-                        );
-                    }
+                Some(Box::new(move |finality_proof| {
+                    let block_tree_handle = block_tree_in_execution_failure_callback.clone();
+                    let commit_root = block_tree_handle.read().commit_root();
+                    let res = block_tree_handle.read()
+                        .path_from_root_to_block(
+                            finality_proof.ledger_info().consensus_block_id(),
+                            commit_root.id(),
+                            commit_root.round(),
+                        )
+                        .unwrap_or_else(Vec::new)
+                        .iter()
+                        .map(|eb|eb.block().clone())
+                        .collect();
+                    res
                 })),
             )
             .await

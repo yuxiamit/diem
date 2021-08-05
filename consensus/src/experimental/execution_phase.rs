@@ -26,7 +26,7 @@ use std::sync::Arc;
 pub type ResetAck = ();
 pub fn reset_ack_new() -> ResetAck {}
 
-pub type ExecutionPhaseCallBackType = Option<Box<dyn FnOnce(HashValue, Block) + Send + Sync>>;
+pub type ExecutionPhaseCallBackType = Option<Box<dyn Fn(LedgerInfoWithSignatures) -> Vec<Block> + Send + Sync>>;
 
 #[cfg(test)]
 pub fn empty_execute_phase_callback() -> ExecutionPhaseCallBackType {
@@ -113,42 +113,60 @@ impl ExecutionPhase {
     }
 
     pub async fn process_ordered_blocks(&mut self, execution_channel_type: ExecutionChannelType) {
-        let ExecutionChannelType(vecblock, ledger_info, execution_failure_callback, callback) =
-            execution_channel_type;
+        let ExecutionChannelType(
+            vecblock,
+            ledger_info,
+            execution_failure_callback,
+            callback
+        ) = execution_channel_type;
         // execute the blocks with execution_correctness_client
-        let execution_result = self.execute_blocks(vecblock.clone());
-        match execution_result {
-            Ok(executed_blocks) => {
-                // pass the executed blocks into the commit phase
-                if self
-                    .commit_channel_tx
-                    .send(CommitChannelType(executed_blocks, ledger_info, callback))
-                    .await
-                    .map_err(|e| ExecutionError::InternalError {
-                        error: e.to_string(),
-                    })
-                    .is_err()
-                {
-                    // if the commit phase stops (due to epoch change),
-                    // execution phase also needs to stop
-                    self.in_epoch = false;
+        let executed = false;
+        let mut blocks_to_execute = vecblock.clone();
+        while !executed {
+            let execution_result = self.execute_blocks(blocks_to_execute.clone());
+            let callback_ledger_info = ledger_info.clone();
+            match execution_result {
+                Ok(executed_blocks) => {
+                    // assert this is consistent with our batch
+                    assert_eq!(executed_blocks.last().unwrap().id(), vecblock.last().unwrap().id());
+                    assert!(executed_blocks.len() >= vecblock.len());
+                    let starting_idx = executed_blocks.len() - vecblock.len();
+                    assert_eq!(
+                        executed_blocks[starting_idx].id(),
+                        vecblock.first().unwrap().id()
+                    );
+                    // pass the executed blocks into the commit phase
+
+                    if self
+                        .commit_channel_tx
+                        .send(CommitChannelType(
+                            executed_blocks[starting_idx..].to_vec(),
+                            ledger_info.clone(),
+                            callback))
+                        .await
+                        .map_err(|e| ExecutionError::InternalError {
+                            error: e.to_string(),
+                        })
+                        .is_err()
+                    {
+                        // if the commit phase stops (due to epoch change),
+                        // execution phase also needs to stop
+                        self.in_epoch = false;
+                    }
+                    break;
                 }
-            }
-            Err(ExecutionError::BlockNotFound(parent_block_id)) => {
-                // execution failure callback
-                // this vector does not goto the commit phase
+                Err(ExecutionError::BlockNotFound(_)) => {
+                    // there must be a callback
+                    let refetched_block = execution_failure_callback
+                        .as_ref()
+                        .unwrap()(callback_ledger_info);
 
-                // find the block that triggers the error, which must exist
-                let target_block = vecblock
-                    .iter()
-                    .find(|b| b.parent_id() == parent_block_id)
-                    .unwrap();
-
-                // there must be a callback
-                execution_failure_callback.unwrap()(parent_block_id, target_block.clone());
-            }
-            _ => {
-                unimplemented!()
+                    blocks_to_execute = refetched_block;
+                }
+                Err(e) => {
+                    // retry locally
+                    error!("Retry execution caused by : Error in executor: {:?}", e);
+                }
             }
         }
     }
