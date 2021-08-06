@@ -43,6 +43,7 @@ use futures::{
     channel::{mpsc::UnboundedReceiver, oneshot},
     prelude::stream::FusedStream,
 };
+use crate::experimental::execution_phase::ResetEventType;
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -159,13 +160,14 @@ impl PendingBlocks {
     }
 }
 
+#[derive(Debug)]
 pub enum CommitPhaseTimeoutEvent {
     BroadcastCommitVote(CommitVote),
     SignCommitVote(LedgerInfoWithSignatures),
 }
 
 pub struct CommitPhase {
-    commit_channel_recv: Receiver<CommitChannelType>,
+    commit_channel_recv: UnboundedReceiver<CommitChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
     blocks: Option<PendingBlocks>,
     commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
@@ -176,7 +178,7 @@ pub struct CommitPhase {
     network_sender: NetworkSender,
     timeout_event_tx: Sender<CommitPhaseTimeoutEvent>,
     timeout_event_rx: Receiver<CommitPhaseTimeoutEvent>,
-    reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
+    reset_event_rx: Receiver<ResetEventType>,
     in_epoch: bool,
 }
 
@@ -233,7 +235,7 @@ impl Drop for CommitPhase {
 
 impl CommitPhase {
     pub fn new(
-        commit_channel_recv: Receiver<CommitChannelType>,
+        commit_channel_recv: UnboundedReceiver<CommitChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
         commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
         verifier: ValidatorVerifier,
@@ -241,8 +243,9 @@ impl CommitPhase {
         author: Author,
         back_pressure: Arc<AtomicU64>,
         network_sender: NetworkSender,
-        reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
+        reset_event_rx: Receiver<ResetEventType>,
     ) -> Self {
+        info!("execution phase new");
         let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitPhaseTimeoutEvent>(
             30,
             &counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_TIMEOUT_CHANNEL,
@@ -317,7 +320,7 @@ impl CommitPhase {
     }
 
     pub async fn check_commit(&mut self) -> anyhow::Result<()> {
-        // we cannot assume blocks is some as the previous messages are invalid
+        // we cannot assume self.blocks is some as the previous messages are invalid
         if let Some(pending_blocks) = self.blocks.as_ref() {
             if pending_blocks.verify(&self.verifier).is_ok() {
                 // asynchronously broadcast the commit decision first to
@@ -456,26 +459,36 @@ impl CommitPhase {
 
     pub async fn process_reset_event(
         &mut self,
-        reset_event_callback: oneshot::Sender<ResetAck>,
+        reset_event: ResetEventType,
     ) -> anyhow::Result<()> {
         // reset the commit phase
         info!("resetting..");
 
+        let ResetEventType { reset_callback, reconfig } = reset_event;
+
         // exhaust the commit channel
-        while self.commit_channel_recv.next().now_or_never().is_some() {}
+        while !self.commit_msg_rx.is_terminated()
+            && !self.commit_channel_recv.is_terminated()
+            && self.commit_channel_recv.next().now_or_never().is_some() {}
 
         // we should also exhaust the message channel
         // as the we are going to set self.blocks to be None,
         // otherwise it might block the epoch manager
-        while self.commit_msg_rx.next().now_or_never().is_some() {}
+        while !self.commit_msg_rx.is_terminated() && self.commit_msg_rx.next().now_or_never().is_some() {}
 
         // reset local block
         self.blocks = None;
 
+        if reconfig {
+            self.in_epoch = false;
+        }
+
         // activate the callback
-        reset_event_callback
+        reset_callback
             .send(reset_ack_new())
             .map_err(|_| Error::ResetDropped)?;
+
+        info!("reset finished");
 
         Ok(())
     }
@@ -503,19 +516,21 @@ impl CommitPhase {
     pub async fn start(mut self) {
         info!("commit phase starts");
         while self.in_epoch {
-            /*
             debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
                 self.blocks.is_some(),
                 !self.commit_msg_rx.is_terminated(),
                 !self.reset_event_rx.is_terminated(),
                 !self.commit_channel_recv.is_terminated(),
             );
-            */
             // if we are still collecting the signatures
+            if self.commit_channel_recv.is_terminated() || self.commit_msg_rx.is_terminated() {
+                break;
+            }
             tokio::select! {
                 // process messages dispatched from epoch_manager
-                Some(msg) = self.commit_msg_rx.next(), if !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
-                        match msg {
+                Some(msg) = self.commit_msg_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
+                    info!("commit_msg_rx");
+                    match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
                                     "process_commit_vote",
@@ -531,18 +546,20 @@ impl CommitPhase {
                             _ => {
                                 unreachable!("Unexpected messages: something wrong with message dispatching.")
                             }
-                        };
-                        report_err!(
+                    };
+                    report_err!(
                             // check if the blocks are ready to commit
                             self.check_commit().await,
                             "Error in checking whether self.block is ready to commit."
-                        );
+                    );
                 }
-                Some(retry_event) = self.timeout_event_rx.next(), if !self.commit_channel_recv.is_terminated()  => {
+                Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
+                    info!("timeout_event_rx");
                     monitor!("process_retry_event", self.process_retry_event(retry_event).await);
                 }
                 // callback event might come when self.blocks is not empty
-                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.reset_event_rx.is_terminated() => {
+                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
+                    info!("reset_event_rx");
                     monitor!("process_reset_event",
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
@@ -551,7 +568,8 @@ impl CommitPhase {
                     );
                 }
                 Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),
-                    if !self.commit_channel_recv.is_terminated() && self.blocks.is_none() => {
+                    if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_none() => {
+                        info!("commit_channel_recv");
                         monitor!("process_executed_blocks",
                             report_err!(
                                 // receive new blocks from execution phase
@@ -565,5 +583,11 @@ impl CommitPhase {
             }
         }
         info!("commit phase stops");
+        debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
+                self.blocks.is_some(),
+                !self.commit_msg_rx.is_terminated(),
+                !self.reset_event_rx.is_terminated(),
+                !self.commit_channel_recv.is_terminated(),
+        );
     }
 }

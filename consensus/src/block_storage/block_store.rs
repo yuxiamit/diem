@@ -315,6 +315,8 @@ impl BlockStore {
                 });
         }
 
+        // later try_commit will set the real round number
+        // setting it here will confuse the tests
         counters::LAST_COMMITTED_ROUND.set(block_store.commit_root().round() as i64);
         block_store
     }
@@ -324,7 +326,7 @@ impl BlockStore {
         let block_id_to_commit = finality_proof.ledger_info().consensus_block_id();
         let block_to_commit = self
             .get_block(block_id_to_commit)
-            .ok_or_else(|| format_err!("Committed block id not found"))?;
+            .ok_or_else(|| format_err!("Committed block id not found {}", block_id_to_commit))?;
 
         // First make sure that this commit is new.
         ensure!(

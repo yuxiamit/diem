@@ -53,17 +53,18 @@ use crate::experimental::{
         prepare_executed_blocks_with_ordered_ledger_info,
     },
 };
-use futures::channel::{mpsc::UnboundedReceiver, oneshot};
+use futures::channel::{mpsc::UnboundedReceiver, mpsc::UnboundedSender, oneshot};
 use tokio::runtime::Runtime;
+use crate::experimental::execution_phase::ResetEventType;
 
 const TEST_CHANNEL_SIZE: usize = 30;
 
 pub fn prepare_commit_phase(
     runtime: &Runtime,
 ) -> (
-    Sender<CommitChannelType>,
+    UnboundedSender<CommitChannelType>,
     Sender<VerifiedEvent>,
-    Sender<oneshot::Sender<ResetAck>>,
+    Sender<ResetEventType>,
     UnboundedReceiver<ExecutionChannelType>,
     Receiver<Event<ConsensusMsg>>,
     Arc<Mutex<MetricsSafetyRules>>,
@@ -260,7 +261,10 @@ mod commit_phase_e2e_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase_reset_tx.send(tx).await.ok();
+            commit_phase_reset_tx.send(ResetEventType {
+                reset_callback: tx,
+                reconfig: false,
+            }).await.ok();
             rx.await.ok();
 
             // now commit_tx should be exhausted. We can send more without blocking.
