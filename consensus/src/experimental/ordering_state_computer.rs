@@ -24,6 +24,7 @@ use crate::{
     state_replication::StateComputerCommitCallBackType,
 };
 use futures::channel::oneshot;
+use crate::experimental::execution_phase::ResetEventType;
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
@@ -33,15 +34,16 @@ pub struct OrderingStateComputer {
     // the real execution phase (will be handled in ExecutionPhase).
     executor_channel: UnboundedSender<ExecutionChannelType>,
     state_computer_for_sync: Arc<dyn StateComputer>,
-    reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
+    reset_event_channel_tx: Sender<ResetEventType>,
 }
 
 impl OrderingStateComputer {
     pub fn new(
         executor_channel: UnboundedSender<ExecutionChannelType>,
         state_computer_for_sync: Arc<dyn StateComputer>,
-        reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
+        reset_event_channel_tx: Sender<ResetEventType>,
     ) -> Self {
+        info!("ordering state computer new");
         Self {
             executor_channel,
             state_computer_for_sync,
@@ -52,6 +54,8 @@ impl OrderingStateComputer {
 
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
+        self.executor_channel.close();
+        self.reset_event_channel_tx.close();
         info!("ordering state computer dropped");
     }
 }
@@ -115,7 +119,10 @@ impl StateComputer for OrderingStateComputer {
         let (tx, rx) = oneshot::channel::<ResetAck>();
         self.reset_event_channel_tx
             .clone()
-            .send(tx)
+            .send(ResetEventType{
+                reset_callback: tx,
+                reconfig: target.ledger_info().ends_epoch(),
+            })
             .await
             .map_err(|_| Error::ResetDropped)?;
         rx.await.map_err(|_| Error::ResetDropped)?;

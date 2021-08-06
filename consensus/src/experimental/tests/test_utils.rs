@@ -42,7 +42,7 @@ use diem_types::{
 use executor_types::StateComputeResult;
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedReceiver},
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     prelude::stream::FusedStream,
@@ -58,15 +58,16 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 use tokio::runtime::Runtime;
+use crate::experimental::execution_phase::ResetEventType;
 
 pub fn prepare_commit_phase_with_block_store_state_computer(
     runtime: &Runtime,
     block_store_state_computer: Arc<dyn StateComputer>,
     channel_size: usize,
 ) -> (
-    Sender<CommitChannelType>,
+    UnboundedSender<CommitChannelType>,
     Sender<VerifiedEvent>,
-    Sender<oneshot::Sender<ResetAck>>,
+    Sender<ResetEventType>,
     UnboundedReceiver<ExecutionChannelType>,
     Receiver<Event<ConsensusMsg>>,
     Arc<Mutex<MetricsSafetyRules>>,
@@ -121,7 +122,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
 
     // Note: we assume no OrderingStateComputer::sync_to will be called during the test
     // OrderingStateComputer::sync_to might block the inner state computer
-    let (execution_phase_reset_tx, _) = channel::new_test::<oneshot::Sender<ResetAck>>(1);
+    let (execution_phase_reset_tx, _) = channel::new_test::<ResetEventType>(1);
 
     let state_computer = Arc::new(OrderingStateComputer::new(
         commit_result_tx,
@@ -145,7 +146,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
     // setting up channels
-    let (commit_tx, commit_rx) = channel::new_test::<CommitChannelType>(channel_size);
+    let (commit_tx, commit_rx) = unbounded::<CommitChannelType>();
 
     let (mut msg_tx, msg_rx) = diem_channel::new::<CommitPhaseMessageKey, VerifiedEvent>(
         QueueStyle::FIFO,
@@ -154,7 +155,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     );
 
     let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
     let commit_phase = CommitPhase::new(
         commit_rx,

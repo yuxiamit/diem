@@ -57,6 +57,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use crate::experimental::execution_phase::ResetEventType;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -312,13 +313,13 @@ impl EpochManager {
         let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
         let (execution_phase_reset_tx, execution_phase_reset_rx) =
-            channel::new::<oneshot::Sender<ResetAck>>(
+            channel::new::<ResetEventType>(
                 1,
                 &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL,
             );
 
         let (commit_phase_reset_tx, commit_phase_reset_rx) =
-            channel::new::<oneshot::Sender<ResetAck>>(
+            channel::new::<ResetEventType>(
                 1,
                 &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL,
             );
@@ -349,10 +350,8 @@ impl EpochManager {
             self.config.max_block_size,
         );
 
-        let (commit_phase_tx, commit_phase_rx) = channel::new::<CommitChannelType>(
-            self.config.channel_size,
-            &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL,
-        );
+        let (commit_phase_tx, commit_phase_rx) =
+            unbounded::<CommitChannelType>();
 
         let execution_phase = ExecutionPhase::new(
             execution_phase_rx,
@@ -368,8 +367,6 @@ impl EpochManager {
                 self.config.channel_size,
                 Some(&counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_CHANNEL),
             );
-
-        // TODO: reset the previous commit phase
 
         self.commit_msg_tx = Some(commit_msg_tx);
 
@@ -409,6 +406,8 @@ impl EpochManager {
     async fn start_round_manager(&mut self, recovery_data: RecoveryData, epoch_state: EpochState) {
         // Release the previous RoundManager, especially the SafetyRule client
         self.processor = None;
+        // Release the previous Commit Phase
+        self.commit_msg_tx = None;
         let epoch = epoch_state.epoch;
         counters::EPOCH.set(epoch_state.epoch as i64);
         counters::CURRENT_EPOCH_VALIDATORS.set(epoch_state.verifier.len() as i64);

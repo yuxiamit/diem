@@ -12,7 +12,7 @@ use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
 use futures::{
-    channel::{mpsc::UnboundedReceiver, oneshot},
+    channel::{mpsc::UnboundedReceiver, mpsc::UnboundedSender, oneshot},
     select, FutureExt, SinkExt, StreamExt,
 };
 use std::sync::Arc;
@@ -26,6 +26,13 @@ use futures::prelude::stream::FusedStream;
 
 pub type ResetAck = ();
 pub fn reset_ack_new() -> ResetAck {}
+
+#[derive(Debug)]
+pub struct ResetEventType {
+    pub reset_callback: oneshot::Sender<ResetAck>,
+    pub reconfig: bool,
+}
+
 
 pub type ExecutionPhaseCallBackType = Option<Box<dyn Fn(LedgerInfoWithSignatures) -> Vec<Block> + Send + Sync>>;
 
@@ -79,21 +86,28 @@ impl std::fmt::Display for ExecutionChannelType {
 pub struct ExecutionPhase {
     executor_channel_rx: UnboundedReceiver<ExecutionChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
-    commit_channel_tx: Sender<CommitChannelType>,
-    reset_event_channel_rx: Receiver<oneshot::Sender<ResetAck>>,
-    commit_phase_reset_event_tx: Sender<oneshot::Sender<ResetAck>>,
+    commit_channel_tx: UnboundedSender<CommitChannelType>,
+    reset_event_channel_rx: Receiver<ResetEventType>,
+    commit_phase_reset_event_tx: Sender<ResetEventType>,
     in_epoch: bool,
     pending_blocks: Option<ExecutionPendingBlocks>,
+}
+
+impl Drop for ExecutionPhase {
+    fn drop(&mut self) {
+        info!("execution phase dropped");
+    }
 }
 
 impl ExecutionPhase {
     pub fn new(
         executor_channel_rx: UnboundedReceiver<ExecutionChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
-        commit_channel_tx: Sender<CommitChannelType>,
-        reset_event_channel_rx: Receiver<oneshot::Sender<ResetAck>>,
-        commit_phase_reset_event_tx: Sender<oneshot::Sender<ResetAck>>,
+        commit_channel_tx: UnboundedSender<CommitChannelType>,
+        reset_event_channel_rx: Receiver<ResetEventType>,
+        commit_phase_reset_event_tx: Sender<ResetEventType>,
     ) -> Self {
+        info!("execution phase new");
         Self {
             executor_channel_rx,
             execution_proxy,
@@ -107,13 +121,18 @@ impl ExecutionPhase {
 
     pub async fn process_reset_event(
         &mut self,
-        reset_event_callback: oneshot::Sender<ResetAck>,
+        reset_event: ResetEventType,
     ) -> anyhow::Result<()> {
+        info!("process_reset_event");
+        let ResetEventType {reset_callback, reconfig} = reset_event;
         // reset the execution phase
 
         // notify the commit phase
         let (tx, rx) = oneshot::channel::<ResetAck>();
-        self.commit_phase_reset_event_tx.send(tx).await?;
+        self.commit_phase_reset_event_tx.send(ResetEventType{
+            reset_callback: tx,
+            reconfig: reconfig,
+        }).await?;
         rx.await?;
 
         // exhaust the executor channel
@@ -121,8 +140,11 @@ impl ExecutionPhase {
 
         self.pending_blocks = None;
 
+        if reconfig {
+            self.in_epoch = false;
+        }
         // activate the callback
-        reset_event_callback
+        reset_callback
             .send(reset_ack_new())
             .map_err(|_| Error::ResetDropped)?;
 
@@ -141,6 +163,7 @@ impl ExecutionPhase {
     }
 
     pub async fn try_execute_blocks(&mut self) {
+        info!("try_execute_blocks");
         if let Some(pd) = self.pending_blocks.as_ref() {
             let vecblock = pd.vecblocks();
             let pending_ledger_info = pd.ledger_info();
@@ -199,6 +222,7 @@ impl ExecutionPhase {
     }
 
     pub async fn process_ordered_blocks(&mut self, execution_channel_type: ExecutionChannelType) {
+        info!("process_ordered_blocks");
         let blocks_to_push = execution_channel_type.0.clone();
         // execute the blocks with execution_correctness_client
 
@@ -214,7 +238,12 @@ impl ExecutionPhase {
         // main loop
         info!("execution phase started");
         while self.in_epoch {
+            debug!("execution phase status: pending {}, executor_channel_rx alive {}, reset_event_channel_rx {}",
+                self.pending_blocks.is_some(),
+                !self.executor_channel_rx.is_terminated(),
+                !self.reset_event_channel_rx.is_terminated());
             if self.pending_blocks.is_none() {
+                debug!("pending blocks is none");
                 select! {
                     executor_channel_msg = self.executor_channel_rx.select_next_some() => {
                         self.process_ordered_blocks(executor_channel_msg).await;
@@ -227,8 +256,10 @@ impl ExecutionPhase {
                     }
                     complete => break,
                 };
+                debug!("got message");
             }
             else {
+                debug!("pending blocks is some");
                 self.try_execute_blocks();
                 if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
                     self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
@@ -242,5 +273,9 @@ impl ExecutionPhase {
             }
         }
         info!("execution phase stops");
+        debug!("execution phase status: pending {}, executor_channel_rx alive {}, reset_event_channel_rx {}",
+            self.pending_blocks.is_some(),
+            !self.executor_channel_rx.is_terminated(),
+            !self.reset_event_channel_rx.is_terminated());
     }
 }
