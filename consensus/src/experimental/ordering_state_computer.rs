@@ -50,6 +50,12 @@ impl OrderingStateComputer {
     }
 }
 
+impl Drop for OrderingStateComputer {
+    fn drop(&mut self) {
+        info!("ordering state computer dropped");
+    }
+}
+
 #[async_trait::async_trait]
 impl StateComputer for OrderingStateComputer {
     fn compute(
@@ -79,7 +85,7 @@ impl StateComputer for OrderingStateComputer {
 
         let ordered_block = blocks.iter().map(|b| b.block().clone()).collect();
 
-        self.executor_channel
+        if let Err(e) = self.executor_channel
             .clone()
             .send(ExecutionChannelType(
                 ordered_block,
@@ -87,10 +93,10 @@ impl StateComputer for OrderingStateComputer {
                 executor_failure_callback,
                 callback,
             ))
-            .await
-            .map_err(|e| ExecutionError::InternalError {
-                error: e.to_string(),
-            })?;
+            .await {
+            // probably the execution phase is gone
+            error!("Send failure {}", e.to_string());
+        }
         Ok(())
     }
 
@@ -105,8 +111,6 @@ impl StateComputer for OrderingStateComputer {
             target.clone()
         );
 
-        self.state_computer_for_sync.sync_to(target).await?;
-
         // reset execution phase and commit phase
         let (tx, rx) = oneshot::channel::<ResetAck>();
         self.reset_event_channel_tx
@@ -115,6 +119,11 @@ impl StateComputer for OrderingStateComputer {
             .await
             .map_err(|_| Error::ResetDropped)?;
         rx.await.map_err(|_| Error::ResetDropped)?;
+
+        // has to after reset to avoid racing (committing the blocks after the sync)
+        self.state_computer_for_sync.sync_to(target).await?;
+
+        debug!("sync finished");
 
         Ok(())
     }

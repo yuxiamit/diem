@@ -224,6 +224,13 @@ async fn sleep_and_retry(
     )
 }
 
+// This trivial implementation of `drop` adds a print to console.
+impl Drop for CommitPhase {
+    fn drop(&mut self) {
+        info!("Dropping commit phase");
+    }
+}
+
 impl CommitPhase {
     pub fn new(
         commit_channel_recv: Receiver<CommitChannelType>,
