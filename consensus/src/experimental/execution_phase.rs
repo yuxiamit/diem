@@ -16,6 +16,7 @@ use futures::{
     select, FutureExt, SinkExt, StreamExt,
 };
 use std::sync::Arc;
+use futures::prelude::stream::FusedStream;
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from
@@ -40,6 +41,29 @@ pub struct ExecutionChannelType(
     pub StateComputerCommitCallBackType,
 );
 
+pub struct ExecutionPendingBlocks {
+    pub pending_channel_type: Option<ExecutionChannelType>,
+    pub original_blocks: Vec<Block>,
+}
+
+impl ExecutionPendingBlocks {
+    pub fn update_blocks(&mut self, blocks: Vec<Block>) {
+        let pending_channel_type = self.pending_channel_type.take().unwrap();
+        self.pending_channel_type = Some(ExecutionChannelType (
+            blocks,
+            pending_channel_type.1,
+            pending_channel_type.2,
+            pending_channel_type.3,
+        ))
+    }
+
+    pub fn vecblocks(&self) -> Vec<Block> { self.pending_channel_type.as_ref().unwrap().0.clone() }
+    pub fn ledger_info(&self) -> LedgerInfoWithSignatures { self.pending_channel_type.as_ref().unwrap().1.clone() }
+    pub fn execution_failure_callback(&self) -> &ExecutionPhaseCallBackType {
+        &self.pending_channel_type.as_ref().unwrap().2
+    }
+}
+
 impl std::fmt::Debug for ExecutionChannelType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self)
@@ -59,6 +83,7 @@ pub struct ExecutionPhase {
     reset_event_channel_rx: Receiver<oneshot::Sender<ResetAck>>,
     commit_phase_reset_event_tx: Sender<oneshot::Sender<ResetAck>>,
     in_epoch: bool,
+    pending_blocks: Option<ExecutionPendingBlocks>,
 }
 
 impl ExecutionPhase {
@@ -76,6 +101,7 @@ impl ExecutionPhase {
             reset_event_channel_rx,
             commit_phase_reset_event_tx,
             in_epoch: true,
+            pending_blocks: None,
         }
     }
 
@@ -92,6 +118,8 @@ impl ExecutionPhase {
 
         // exhaust the executor channel
         while self.executor_channel_rx.next().now_or_never().is_some() {}
+
+        self.pending_blocks = None;
 
         // activate the callback
         reset_event_callback
@@ -112,28 +140,20 @@ impl ExecutionPhase {
         executed_blocks
     }
 
-    pub async fn process_ordered_blocks(&mut self, execution_channel_type: ExecutionChannelType) {
-        let ExecutionChannelType(
-            vecblock,
-            ledger_info,
-            execution_failure_callback,
-            callback
-        ) = execution_channel_type;
-        // execute the blocks with execution_correctness_client
-        let executed = false;
-        let mut blocks_to_execute = vecblock.clone();
-        while !executed {
-            let execution_result = self.execute_blocks(blocks_to_execute.clone());
-            let callback_ledger_info = ledger_info.clone();
+    pub async fn try_execute_blocks(&mut self) {
+        if let Some(pd) = self.pending_blocks.as_ref() {
+            let vecblock = pd.vecblocks();
+            let pending_ledger_info = pd.ledger_info();
+            let execution_result = self.execute_blocks(vecblock.clone());
             match execution_result {
                 Ok(executed_blocks) => {
                     // assert this is consistent with our batch
-                    assert_eq!(executed_blocks.last().unwrap().id(), vecblock.last().unwrap().id());
+                    assert_eq!(executed_blocks.last().unwrap().id(), pd.original_blocks.last().unwrap().id());
                     assert!(executed_blocks.len() >= vecblock.len());
-                    let starting_idx = executed_blocks.len() - vecblock.len();
+                    let starting_idx = executed_blocks.len() - pd.original_blocks.len();
                     assert_eq!(
                         executed_blocks[starting_idx].id(),
-                        vecblock.first().unwrap().id()
+                        pd.original_blocks.first().unwrap().id()
                     );
                     // pass the executed blocks into the commit phase
 
@@ -141,8 +161,10 @@ impl ExecutionPhase {
                         .commit_channel_tx
                         .send(CommitChannelType(
                             executed_blocks[starting_idx..].to_vec(),
-                            ledger_info.clone(),
-                            callback))
+                            pending_ledger_info.clone(),
+                            self.pending_blocks.
+                                    take().unwrap().pending_channel_type.take().unwrap().3
+                        ))
                         .await
                         .map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
@@ -153,15 +175,20 @@ impl ExecutionPhase {
                         // execution phase also needs to stop
                         self.in_epoch = false;
                     }
-                    break;
+
+                    if executed_blocks.last().unwrap().compute_result().has_reconfiguration() {
+                        // stop myself
+                        self.in_epoch = false;
+                    }
+
                 }
                 Err(ExecutionError::BlockNotFound(_)) => {
                     // there must be a callback
-                    let refetched_block = execution_failure_callback
-                        .as_ref()
-                        .unwrap()(callback_ledger_info);
+                    let refetched_block = pd
+                        .execution_failure_callback().as_ref().unwrap()
+                        (pending_ledger_info.clone());
 
-                    blocks_to_execute = refetched_block;
+                    self.pending_blocks.as_mut().unwrap().update_blocks(refetched_block);
                 }
                 Err(e) => {
                     // retry locally
@@ -171,22 +198,48 @@ impl ExecutionPhase {
         }
     }
 
+    pub async fn process_ordered_blocks(&mut self, execution_channel_type: ExecutionChannelType) {
+        let blocks_to_push = execution_channel_type.0.clone();
+        // execute the blocks with execution_correctness_client
+
+        self.pending_blocks = Some(ExecutionPendingBlocks {
+            pending_channel_type: Some(execution_channel_type),
+            original_blocks: blocks_to_push,
+        });
+
+        self.try_execute_blocks().await;
+    }
+
     pub async fn start(mut self) {
         // main loop
         info!("execution phase started");
         while self.in_epoch {
-            select! {
-                executor_channel_msg = self.executor_channel_rx.select_next_some() => {
-                    self.process_ordered_blocks(executor_channel_msg).await;
-                }
-                reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
+            if self.pending_blocks.is_none() {
+                select! {
+                    executor_channel_msg = self.executor_channel_rx.select_next_some() => {
+                        self.process_ordered_blocks(executor_channel_msg).await;
+                    }
+                    reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
+                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
+                            error: e.to_string(),
+                        })
+                        .unwrap();
+                    }
+                    complete => break,
+                };
+            }
+            else {
+                self.try_execute_blocks();
+                if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
                     self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                         error: e.to_string(),
                     })
-                    .unwrap();
+                        .unwrap();
                 }
-                complete => break,
-            };
+                if self.executor_channel_rx.is_terminated() || self.reset_event_channel_rx.is_terminated() {
+                    break
+                }
+            }
         }
         info!("execution phase stops");
     }

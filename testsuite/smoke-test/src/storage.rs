@@ -284,9 +284,9 @@ fn transfer_and_reconfig(
         if random::<u16>() % 10 == 0 {
             println!(
                 "Changing diem version to {}: {:?}",
-                transferred + 1.0,
+                transferred,
                 client.change_diem_version(
-                    &["change_diem_version", &(transferred + 1.0).to_string()],
+                    &["change_diem_version", &transferred.to_string()],
                     true
                 )
             );

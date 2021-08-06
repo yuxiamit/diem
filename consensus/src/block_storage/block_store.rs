@@ -371,6 +371,7 @@ impl BlockStore {
                 Some(Box::new(move |finality_proof| {
                     let block_tree_handle = block_tree_in_execution_failure_callback.clone();
                     let commit_root = block_tree_handle.read().commit_root();
+                    debug!("refetching blocks starting from round {} to {}", commit_root.round(), finality_proof.commit_info().round());
                     let res = block_tree_handle.read()
                         .path_from_root_to_block(
                             finality_proof.ledger_info().consensus_block_id(),
