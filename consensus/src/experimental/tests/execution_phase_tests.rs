@@ -24,12 +24,18 @@ use diem_types::{account_address::AccountAddress, validator_verifier::random_val
 use executor_types::StateComputeResult;
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedSender},
+        mpsc::{unbounded, UnboundedSender, UnboundedReceiver},
         oneshot,
     },
     SinkExt, StreamExt,
 };
 use std::{collections::BTreeMap, sync::Arc};
+use crate::experimental::execution_phase::ResetEventType;
+use crate::experimental::ordering_state_computer::OrderingStateComputer;
+use crate::test_utils::EmptyStateComputer;
+use tokio::time::{sleep, Duration};
+use crate::state_replication::StateComputer;
+use consensus_types::executed_block::ExecutedBlock;
 
 const EXECUTION_PHASE_TEST_CHANNEL_SIZE: usize = 30;
 
@@ -37,21 +43,19 @@ fn prepare_execution_phase() -> (
     ExecutionPhase,
     HashValue,
     UnboundedSender<ExecutionChannelType>,
-    Receiver<CommitChannelType>,
-    Sender<oneshot::Sender<ResetAck>>,
-    Receiver<oneshot::Sender<ResetAck>>,
+    UnboundedReceiver<CommitChannelType>,
+    Sender<ResetEventType>,
+    Receiver<ResetEventType>,
 ) {
-    let channel_size = EXECUTION_PHASE_TEST_CHANNEL_SIZE;
-
     let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
     let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
-    let (commit_phase_tx, commit_phase_rx) = channel::new_test::<CommitChannelType>(channel_size);
+    let (commit_phase_tx, commit_phase_rx) = unbounded::<CommitChannelType>();
 
     let random_state_computer = RandomComputeResultStateComputer::new();
     let random_execute_result_root_hash = random_state_computer.get_root_hash();
@@ -133,6 +137,71 @@ fn test_execution_phase_e2e() {
     });
 }
 
+
+#[test]
+fn test_execution_phase_drop() {
+    let num_nodes = 1;
+    let mut runtime = consensus_runtime();
+
+    let (
+        execution_phase,
+        _random_execute_result_root_hash,
+        mut execution_phase_tx,
+        _commit_phase_rx,
+        execution_phase_reset_tx,
+        _commit_phase_reset_rx,
+    ) = prepare_execution_phase();
+
+    let mut join_handle = runtime.spawn(execution_phase.start());
+
+    let mut ordering_state_computer = OrderingStateComputer::new(
+        execution_phase_tx,
+        Arc::new(EmptyStateComputer),
+        execution_phase_reset_tx,
+    );
+
+    let (signers, _) = random_validator_verifier(num_nodes, None, false);
+    let signer = &signers[0];
+    let genesis_qc = certificate_for_genesis();
+    let block = random_empty_block(signer, genesis_qc);
+
+    let dummy_state_compute_result = StateComputeResult::new_dummy();
+
+    let li = LedgerInfo::new(
+        block.gen_block_info(
+            dummy_state_compute_result.root_hash(),
+            dummy_state_compute_result.version(),
+            dummy_state_compute_result.epoch_state().clone(),
+        ),
+        *ACCUMULATOR_PLACEHOLDER_HASH,
+    );
+
+    let li_sig =
+        LedgerInfoWithSignatures::new(li, BTreeMap::<AccountAddress, Ed25519Signature>::new());
+
+    let blocks = vec![Arc::new(ExecutedBlock::new(
+        block,
+        StateComputeResult::new_dummy(),
+    ))];
+
+    timed_block_on(&mut runtime,async move {
+
+        ordering_state_computer.commit(
+            &blocks,
+            li_sig.clone(),
+            empty_state_computer_call_back(),
+            empty_execute_phase_callback(),
+        ).await.unwrap();
+
+        sleep(Duration::from_secs(1)).await;
+
+        drop(ordering_state_computer);
+
+        join_handle.await.unwrap();
+    });
+}
+
+
 #[test]
 fn test_execution_phase_reset() {
     let num_nodes = 1;
@@ -186,11 +255,14 @@ fn test_execution_phase_reset() {
         let (tx, rx) = oneshot::channel::<ResetAck>();
 
         tokio::spawn(async move {
-            let tx2 = commit_phase_reset_rx.next().await.unwrap();
+            let ResetEventType { reset_callback: tx2, reconfig: _} = commit_phase_reset_rx.next().await.unwrap();
             tx2.send(reset_ack_new()).ok();
         });
 
-        execution_phase.process_reset_event(tx).await.ok();
+        execution_phase.process_reset_event(ResetEventType{
+            reset_callback: tx,
+            reconfig: false,
+        }).await.ok();
 
         rx.await.ok();
 

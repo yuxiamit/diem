@@ -33,14 +33,14 @@ use std::{
 use tokio::time;
 
 use crate::{
-    experimental::execution_phase::{reset_ack_new, ResetAck},
+    experimental::execution_phase::{reset_ack_new},
     state_replication::StateComputerCommitCallBackType,
 };
 use anyhow::anyhow;
 
 use diem_types::epoch_change::EpochChangeProof;
 use futures::{
-    channel::{mpsc::UnboundedReceiver, oneshot},
+    channel::{mpsc::UnboundedReceiver},
     prelude::stream::FusedStream,
 };
 use crate::experimental::execution_phase::ResetEventType;
@@ -245,7 +245,7 @@ impl CommitPhase {
         network_sender: NetworkSender,
         reset_event_rx: Receiver<ResetEventType>,
     ) -> Self {
-        info!("execution phase new");
+        info!("commit phase new");
         let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitPhaseTimeoutEvent>(
             30,
             &counters::DECOUPLED_EXECUTION__COMMIT_MESSAGE_TIMEOUT_CHANNEL,
@@ -471,10 +471,12 @@ impl CommitPhase {
             && !self.commit_channel_recv.is_terminated()
             && self.commit_channel_recv.next().now_or_never().is_some() {}
 
+        /*
         // we should also exhaust the message channel
         // as the we are going to set self.blocks to be None,
         // otherwise it might block the epoch manager
         while !self.commit_msg_rx.is_terminated() && self.commit_msg_rx.next().now_or_never().is_some() {}
+        */
 
         // reset local block
         self.blocks = None;
@@ -527,6 +529,21 @@ impl CommitPhase {
                 break;
             }
             tokio::select! {
+                biased;
+                // callback event might come when self.blocks is not empty
+                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
+                    info!("reset_event_rx");
+                    monitor!("process_reset_event",
+                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
+                            error: e.to_string(),
+                        })
+                        .unwrap()
+                    );
+                }
+                Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
+                    info!("timeout_event_rx");
+                    monitor!("process_retry_event", self.process_retry_event(retry_event).await);
+                }
                 // process messages dispatched from epoch_manager
                 Some(msg) = self.commit_msg_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
                     info!("commit_msg_rx");
@@ -551,20 +568,6 @@ impl CommitPhase {
                             // check if the blocks are ready to commit
                             self.check_commit().await,
                             "Error in checking whether self.block is ready to commit."
-                    );
-                }
-                Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
-                    info!("timeout_event_rx");
-                    monitor!("process_retry_event", self.process_retry_event(retry_event).await);
-                }
-                // callback event might come when self.blocks is not empty
-                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
-                    info!("reset_event_rx");
-                    monitor!("process_reset_event",
-                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
-                            error: e.to_string(),
-                        })
-                        .unwrap()
                     );
                 }
                 Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),

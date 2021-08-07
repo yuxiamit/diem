@@ -7,7 +7,6 @@ use consensus_types::{
     common::Round,
     executed_block::ExecutedBlock,
     quorum_cert::QuorumCert,
-    sync_info::SyncInfo,
 };
 use diem_crypto::HashValue;
 use diem_logger::Level;
@@ -28,6 +27,7 @@ pub use mock_state_computer::{
 };
 pub use mock_storage::{EmptyStorage, MockSharedStorage, MockStorage};
 pub use mock_txn_manager::MockTransactionManager;
+use consensus_types::sync_info::SyncInfo;
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 

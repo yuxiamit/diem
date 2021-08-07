@@ -9,7 +9,7 @@ use crate::{
         commit_phase::{
             CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
         },
-        execution_phase::{ExecutionChannelType, ExecutionPhase, ResetAck},
+        execution_phase::{ExecutionChannelType, ExecutionPhase},
         ordering_state_computer::OrderingStateComputer,
     },
     liveness::{
@@ -30,7 +30,7 @@ use crate::{
     util::time_service::TimeService,
 };
 use anyhow::{anyhow, bail, ensure, Context};
-use channel::{diem_channel, message_queues::QueueStyle, Sender};
+use channel::{diem_channel, message_queues::QueueStyle};
 use consensus_types::{
     common::{Author, Round},
     epoch_retrieval::EpochRetrievalRequest,

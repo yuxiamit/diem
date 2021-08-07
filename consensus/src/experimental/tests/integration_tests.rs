@@ -33,6 +33,7 @@ use crate::{
 use consensus_types::executed_block::ExecutedBlock;
 use executor_types::StateComputeResult;
 use futures::channel::{mpsc::unbounded, oneshot};
+use crate::experimental::execution_phase::ResetEventType;
 
 #[test]
 fn decoupled_execution_integration() {
@@ -41,7 +42,7 @@ fn decoupled_execution_integration() {
     let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
     let state_computer = Arc::new(OrderingStateComputer::new(
         execution_phase_tx,

@@ -21,7 +21,7 @@ use crate::{
     persistent_liveness_storage::{PersistentLivenessStorage, RecoveryData},
     state_replication::{StateComputer, TxnManager},
 };
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use consensus_types::{
     block::Block,
     block_retrieval::{BlockRetrievalResponse, BlockRetrievalStatus},
@@ -48,7 +48,7 @@ use std::{
     time::Duration,
 };
 use termion::color::*;
-use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
+
 
 #[derive(Serialize, Clone)]
 pub enum UnverifiedEvent {

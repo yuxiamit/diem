@@ -652,7 +652,10 @@ mod commit_phase_function_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase.process_reset_event(tx).await.ok();
+            commit_phase.process_reset_event(ResetEventType {
+                reset_callback: tx,
+                reconfig: false,
+            }).await.ok();
             rx.await.ok();
 
             // the block should be dropped
