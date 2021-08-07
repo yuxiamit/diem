@@ -31,15 +31,16 @@ use futures::{
 };
 use rand::Rng;
 use std::collections::BTreeMap;
+use crate::experimental::execution_phase::ResetEventType;
 
 pub fn prepare_ordering_state_computer() -> (
     Arc<OrderingStateComputer>,
     UnboundedReceiver<ExecutionChannelType>,
-    Receiver<oneshot::Sender<ResetAck>>,
+    Receiver<ResetEventType>,
 ) {
     let (commit_result_tx, commit_result_rx) = unbounded::<ExecutionChannelType>();
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
     let state_computer = Arc::new(OrderingStateComputer::new(
         commit_result_tx,
         Arc::new(EmptyStateComputer {}),

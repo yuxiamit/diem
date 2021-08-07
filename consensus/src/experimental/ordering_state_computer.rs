@@ -54,8 +54,6 @@ impl OrderingStateComputer {
 
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
-        self.executor_channel.close();
-        self.reset_event_channel_tx.close();
         info!("ordering state computer dropped");
     }
 }

@@ -672,12 +672,15 @@ impl DiemSwarm {
         Err(SwarmLaunchFailure::LaunchTimeout)
     }
 
+    pub fn wait_for_all_nodes_to_catchup(&mut self) -> bool {
+        self.wait_for_all_nodes_to_catchup_with_attempts(60)
+    }
+
     /// This function first checks the last committed round of all the nodes, picks the max
     /// value and then waits for all the nodes to catch up to that round.
     /// Once done, we can guarantee that all the txns committed before the invocation of this
     /// function are now available at all the nodes.
-    pub fn wait_for_all_nodes_to_catchup(&mut self) -> bool {
-        let num_attempts = 60;
+    pub fn wait_for_all_nodes_to_catchup_with_attempts(&mut self, num_attempts: i32) -> bool {
         let last_committed_round_str = "diem_consensus_last_committed_round{}";
         let mut done = vec![false; self.nodes.len()];
         let log_header = self.log_header();

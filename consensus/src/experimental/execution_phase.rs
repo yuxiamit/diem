@@ -7,7 +7,7 @@ use crate::{
 };
 use channel::{Receiver, Sender};
 use consensus_types::{block::Block, executed_block::ExecutedBlock};
-use diem_crypto::HashValue;
+
 use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
@@ -17,6 +17,8 @@ use futures::{
 };
 use std::sync::Arc;
 use futures::prelude::stream::FusedStream;
+use std::thread::sleep;
+use std::time::Duration;
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from
@@ -96,6 +98,10 @@ pub struct ExecutionPhase {
 impl Drop for ExecutionPhase {
     fn drop(&mut self) {
         info!("execution phase dropped");
+        debug!("execution phase status: pending {}, executor_channel_rx alive {}, reset_event_channel_rx {}",
+                self.pending_blocks.is_some(),
+                !self.executor_channel_rx.is_terminated(),
+                !self.reset_event_channel_rx.is_terminated());
     }
 }
 
@@ -244,6 +250,16 @@ impl ExecutionPhase {
                 !self.reset_event_channel_rx.is_terminated());
             if self.pending_blocks.is_none() {
                 debug!("pending blocks is none");
+
+                if self.reset_event_channel_rx.is_terminated() || self.executor_channel_rx.is_terminated() {
+                    break
+                }
+
+                //let (mut tx, mut rx) = oneshot::channel::<u8>();
+                //tokio::spawn(async move {
+                //    sleep(Duration::from_secs(2));
+                //    tx.send(1);
+                //});
                 select! {
                     executor_channel_msg = self.executor_channel_rx.select_next_some() => {
                         self.process_ordered_blocks(executor_channel_msg).await;
@@ -254,13 +270,16 @@ impl ExecutionPhase {
                         })
                         .unwrap();
                     }
+                    //_ = rx => {
+                    //    info!("timer picked up");
+                    //}
                     complete => break,
                 };
                 debug!("got message");
             }
             else {
                 debug!("pending blocks is some");
-                self.try_execute_blocks();
+                self.try_execute_blocks().await;
                 if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
                     self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                         error: e.to_string(),

@@ -130,6 +130,8 @@ pub fn update_counters_and_prune_blocks(
     );
 
     let id_to_remove = block_tree.read().find_blocks_to_prune(block_to_commit.id());
+    debug!("plan to prune: {:?}", id_to_remove);
+
     if let Err(e) = storage.prune_tree(id_to_remove.clone().into_iter().collect()) {
         // it's fine to fail here, as long as the commit succeeds, the next restart will clean
         // up dangling blocks, and we need to prune the tree to keep the root consistent with
@@ -215,6 +217,7 @@ impl BlockStore {
                     qc.commit_info().round(),
                     qc.ledger_info()
                 );
+
                 if let Err(e) = self.commit(qc.ledger_info().clone()).await {
                     error!("Error in try-committing blocks. {}", e.to_string());
                 }

@@ -26,11 +26,11 @@ use diem_types::{
 };
 
 use diem_config::config::DEFAULT_BACK_PRESSURE_LIMIT;
-use diem_crypto::hash::ACCUMULATOR_PLACEHOLDER_HASH;
+
 use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
 use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
-use crate::round_manager::RoundManager;
+
 
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
@@ -64,11 +64,11 @@ impl BlockStore {
         // if sync to this node really helps and ..
         self.commit_root().round() < li.commit_info().round()
 
-            && (sync_only ||
+            && (
+            // we are in sync only mode, or...
+            sync_only ||
             // we are far behind, or ..
-                self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= li.commit_info().round() ||
-                // we are in sync only mode, or ..
-                self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= self.ordered_root().round() || // if at sync only
+                // self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= li.commit_info().round() ||
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
             )
@@ -200,14 +200,12 @@ impl BlockStore {
         retriever: &mut BlockRetriever,
         sync_only: bool,
     ) -> anyhow::Result<()> {
-        /*
         debug!("sync_to_highest_ordered_cert HLI:{}, self.HLI {}, ordered_root_round: {} commit_root_round: {}",
             highest_ledger_info,
             self.inner.read().highest_ledger_info(),
             self.ordered_root().round(),
             self.commit_root().round(),
         );
-        */
 
         if !self.need_sync_for_quorum_cert(&highest_ordered_cert, &highest_ledger_info, sync_only) {
             return Ok(());
@@ -261,7 +259,7 @@ impl BlockStore {
             highest_ordered_cert.certified_block().round()
         );
 
-        let mut blocks = retriever
+        let blocks = retriever
             .retrieve_block_for_qc(highest_ordered_cert, num_blocks)
             .await?;
 
