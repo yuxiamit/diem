@@ -122,6 +122,9 @@ CommitVote:
         TYPENAME: LedgerInfo
     - signature:
         TYPENAME: Ed25519Signature
+    - history:
+        SEQ:
+          TYPENAME: LedgerInfoWithSignatures
 ConsensusMsg:
   ENUM:
     0:

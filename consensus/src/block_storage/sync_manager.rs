@@ -25,7 +25,7 @@ use diem_types::{
     ledger_info::LedgerInfoWithSignatures,
 };
 
-use diem_config::config::DEFAULT_BACK_PRESSURE_LIMIT;
+use diem_config::config::{DEFAULT_BACK_PRESSURE_LIMIT, DEFAULT_COMMIT_DECISION_GRACE_PERIOD};
 
 use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
@@ -66,9 +66,10 @@ impl BlockStore {
 
             && (
             // we are in sync only mode, or...
-            sync_only ||
-            // we are far behind, or ..
-                // self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT <= li.commit_info().round() ||
+            (sync_only &&
+            // we are far behind that no chance of revive through
+                // commit phase (no commit vote/decision will be received), or ..
+                self.commit_root().round() + DEFAULT_COMMIT_DECISION_GRACE_PERIOD as u64 <= li.commit_info().round()) ||
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
             )

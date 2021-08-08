@@ -44,6 +44,9 @@ use futures::{
     prelude::stream::FusedStream,
 };
 use crate::experimental::execution_phase::ResetEventType;
+use std::collections::VecDeque;
+use diem_config::config::DEFAULT_COMMIT_DECISION_GRACE_PERIOD;
+use diem_types::epoch_state::EpochState;
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -180,6 +183,7 @@ pub struct CommitPhase {
     timeout_event_rx: Receiver<CommitPhaseTimeoutEvent>,
     reset_event_rx: Receiver<ResetEventType>,
     in_epoch: bool,
+    local_commit_decision_history: VecDeque<LedgerInfoWithSignatures>,
 }
 
 /// Wrapper for ExecutionProxy.commit
@@ -264,6 +268,7 @@ impl CommitPhase {
             timeout_event_rx,
             reset_event_rx,
             in_epoch: true,
+            local_commit_decision_history: VecDeque::new(),
         }
     }
 
@@ -275,18 +280,26 @@ impl CommitPhase {
         if let Some(pending_blocks) = self.blocks.as_mut() {
             let commit_ledger_info = commit_vote.ledger_info();
 
-            // if the block infos do not match
-            if commit_ledger_info.commit_info() != pending_blocks.block_info() {
-                return Err(Error::InconsistentBlockInfo(
-                    commit_ledger_info.commit_info().clone(),
-                    pending_blocks.block_info().clone(),
-                )); // ignore the message
+            let history = commit_vote.history();
+            if let Some(li) = history.iter().find(|li| li.commit_info() == pending_blocks.block_info()) {
+                li.verify_signatures(&self.verifier).map_err(|_| Error::VerificationError)?;
+                pending_blocks.replace_ledger_info_sig(li.clone());
+                self.commit_verified().await?; // skip one round of verification
             }
+            else {
+                // if the block infos do not match
+                if commit_ledger_info.commit_info() != pending_blocks.block_info() {
+                    return Err(Error::InconsistentBlockInfo(
+                        commit_ledger_info.commit_info().clone(),
+                        pending_blocks.block_info().clone(),
+                    )); // ignore the message
+                }
 
-            // add the signature into the signature tree
-            pending_blocks
-                .ledger_info_sig_mut()
-                .add_signature(commit_vote.author(), commit_vote.signature().clone());
+                // add the signature into the signature tree
+                pending_blocks
+                    .ledger_info_sig_mut()
+                    .add_signature(commit_vote.author(), commit_vote.signature().clone());
+            }
         } else {
             info!("Ignore the commit vote message because the commit phase does not have a pending block.")
         }
@@ -312,6 +325,7 @@ impl CommitPhase {
 
             // replace the signature tree
             pending_blocks.replace_ledger_info_sig(commit_ledger_info.clone());
+            self.commit_verified().await?;
         } else {
             info!("Ignore the commit decision message because the commit phase does not have a pending block.")
         }
@@ -319,46 +333,59 @@ impl CommitPhase {
         Ok(())
     }
 
+    /// try committing when the pending block is definitely ready
+    pub async fn commit_verified(&mut self) -> anyhow::Result<(), Error> {
+        // asynchronously broadcast the commit decision first to
+        // save the time of other nodes.
+
+        let commit_ledger_info = self.blocks.as_ref().unwrap().ledger_info_sig().clone();
+
+        self.local_commit_decision_history.push_back(commit_ledger_info.clone());
+        if self.local_commit_decision_history.len() > DEFAULT_COMMIT_DECISION_GRACE_PERIOD {
+            self.local_commit_decision_history.pop_front();
+        }
+
+        /*
+        self.network_sender
+            .broadcast(ConsensusMsg::CommitDecisionMsg(Box::new(
+                CommitDecision::new(self.author, pending_blocks.ledger_info_sig().clone()),
+            )))
+            .await;
+         */
+
+        let pending_blocks = self.blocks.take().unwrap();
+        let round = pending_blocks.round();
+
+        commit(&self.execution_proxy, pending_blocks)
+            .await
+            .expect("Failed to commit the executed blocks.");
+
+        if commit_ledger_info.ledger_info().ends_epoch() {
+            debug!(
+                        "notify epoch change: {:?}",
+                        commit_ledger_info.ledger_info().next_epoch_state()
+                    );
+            self.network_sender
+                .notify_epoch_change(EpochChangeProof::new(
+                    vec![commit_ledger_info],
+                    /* more = */ false,
+                ))
+                .await;
+            self.in_epoch = false;
+        }
+
+        // update the back pressure
+        self.back_pressure.store(round, Ordering::SeqCst);
+
+        // now self.blocks is none, ready for the next batch of blocks
+        Ok(())
+    }
+
     pub async fn check_commit(&mut self) -> anyhow::Result<()> {
         // we cannot assume self.blocks is some as the previous messages are invalid
         if let Some(pending_blocks) = self.blocks.as_ref() {
             if pending_blocks.verify(&self.verifier).is_ok() {
-                // asynchronously broadcast the commit decision first to
-                // save the time of other nodes.
-
-                self.network_sender
-                    .broadcast(ConsensusMsg::CommitDecisionMsg(Box::new(
-                        CommitDecision::new(self.author, pending_blocks.ledger_info_sig().clone()),
-                    )))
-                    .await;
-
-                let pending_blocks = self.blocks.take().unwrap();
-                let round = pending_blocks.round();
-
-                let commit_ledger_info = pending_blocks.ledger_info_sig().clone();
-
-                commit(&self.execution_proxy, pending_blocks)
-                    .await
-                    .expect("Failed to commit the executed blocks.");
-
-                if commit_ledger_info.ledger_info().ends_epoch() {
-                    debug!(
-                        "notify epoch change: {:?}",
-                        commit_ledger_info.ledger_info().next_epoch_state()
-                    );
-                    self.network_sender
-                        .notify_epoch_change(EpochChangeProof::new(
-                            vec![commit_ledger_info],
-                            /* more = */ false,
-                        ))
-                        .await;
-                    self.in_epoch = false;
-                }
-
-                // update the back pressure
-                self.back_pressure.store(round, Ordering::SeqCst);
-
-                // now self.blocks is none, ready for the next batch of blocks
+                self.commit_verified().await?;
             }
         }
 
@@ -391,10 +418,13 @@ impl CommitPhase {
                 );
 
                 if let Ok(signature) = sign_result {
-                    let commit_vote = CommitVote::new_with_signature(
+                    let commit_vote = CommitVote::new_with_signature_history(
                         self.author,
                         commit_ledger_info.clone(),
                         signature,
+                        self.local_commit_decision_history
+                            .iter().map(|li| li.clone())
+                            .collect::<Vec<LedgerInfoWithSignatures>>(),
                     );
 
                     // asynchronously broadcast the message.
