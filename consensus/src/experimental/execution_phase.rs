@@ -253,11 +253,6 @@ impl ExecutionPhase {
              */
             if self.pending_blocks.is_none() {
                 //debug!("pending blocks is none");
-
-                if self.reset_event_channel_rx.is_terminated() || self.executor_channel_rx.is_terminated() {
-                    break
-                }
-
                 //let (mut tx, mut rx) = oneshot::channel::<u8>();
                 //tokio::spawn(async move {
                 //    sleep(Duration::from_secs(2));
@@ -283,6 +278,9 @@ impl ExecutionPhase {
             else {
                 //debug!("pending blocks is some");
                 self.try_execute_blocks().await;
+                if self.pending_blocks.is_none() {
+                    continue;
+                }
                 if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
                     self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                         error: e.to_string(),
