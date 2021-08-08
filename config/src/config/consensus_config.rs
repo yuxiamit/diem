@@ -6,7 +6,8 @@ use diem_types::{account_address::AccountAddress, block_info::Round};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
-pub const DEFAULT_BACK_PRESSURE_LIMIT: u64 = 60;
+pub const DEFAULT_BACK_PRESSURE_LIMIT: u64 = 10;
+pub const DEFAULT_COMMIT_DECISION_GRACE_PERIOD: usize = 5;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]

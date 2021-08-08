@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::{Author, Round};
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{
     block_info::BlockInfo, ledger_info::LedgerInfo, validator_signer::ValidatorSigner,
@@ -11,12 +11,15 @@ use diem_types::{
 use serde::{Deserialize, Serialize};
 use short_hex_str::AsShortHexStr;
 use std::fmt::{Debug, Display, Formatter};
+use diem_types::ledger_info::LedgerInfoWithSignatures;
+use diem_types::validator_verifier::VerifyError;
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitVote {
     author: Author,
     ledger_info: LedgerInfo,
     signature: Ed25519Signature,
+    history: Vec<LedgerInfoWithSignatures>,
 }
 
 // this is required by structured log
@@ -54,10 +57,20 @@ impl CommitVote {
         ledger_info: LedgerInfo,
         signature: Ed25519Signature,
     ) -> Self {
+        Self::new_with_signature_history(author, ledger_info, signature, vec![])
+    }
+
+    pub fn new_with_signature_history(
+        author: Author,
+        ledger_info: LedgerInfo,
+        signature: Ed25519Signature,
+        history: Vec<LedgerInfoWithSignatures>,
+    ) -> Self {
         Self {
             author,
             ledger_info,
             signature,
+            history,
         }
     }
 
@@ -69,6 +82,10 @@ impl CommitVote {
     /// Return the LedgerInfo associated with this commit proposal
     pub fn ledger_info(&self) -> &LedgerInfo {
         &self.ledger_info
+    }
+
+    pub fn history(&self) -> &Vec<LedgerInfoWithSignatures> {
+        &self.history
     }
 
     /// Return the signature of the vote
@@ -89,7 +106,8 @@ impl CommitVote {
     pub fn verify(&self, validator: &ValidatorVerifier) -> anyhow::Result<()> {
         validator
             .verify(self.author(), &self.ledger_info, &self.signature)
-            .context("Failed to verify Commit Proposal")
+            .context("Failed to verify Commit Proposal")?;
+        Ok(())
     }
 
     pub fn commit_info(&self) -> &BlockInfo {
