@@ -59,7 +59,7 @@ decision message helps the slower nodes to quickly catch up without
 having to collect the signatures.
 */
 
-const COMMIT_PHASE_TIMEOUT_MILLISEC: u64 = 500; // retry timeout in milli seconds
+const COMMIT_PHASE_TIMEOUT_MILLISEC: u64 = 200; // retry timeout in milli seconds
 
 pub struct CommitChannelType(
     pub Vec<ExecutedBlock>,
@@ -561,20 +561,6 @@ impl CommitPhase {
             }
             tokio::select! {
                 biased;
-                // callback event might come when self.blocks is not empty
-                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
-                    //info!("reset_event_rx");
-                    monitor!("process_reset_event",
-                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
-                            error: e.to_string(),
-                        })
-                        .unwrap()
-                    );
-                }
-                Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
-                    //info!("timeout_event_rx");
-                    monitor!("process_retry_event", self.process_retry_event(retry_event).await);
-                }
                 // process messages dispatched from epoch_manager
                 Some(msg) = self.commit_msg_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
                     //info!("commit_msg_rx");
@@ -612,6 +598,20 @@ impl CommitPhase {
                                 "Error in processing received blocks"
                             )
                         )
+                }
+                Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
+                    //info!("timeout_event_rx");
+                    monitor!("process_retry_event", self.process_retry_event(retry_event).await);
+                }
+                // callback event might come when self.blocks is not empty
+                Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
+                    //info!("reset_event_rx");
+                    monitor!("process_reset_event",
+                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
+                            error: e.to_string(),
+                        })
+                        .unwrap()
+                    );
                 }
                 else => break,
             }
