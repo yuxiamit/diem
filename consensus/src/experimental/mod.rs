@@ -24,6 +24,8 @@ pub mod commit_phase;
 pub mod errors;
 pub mod execution_phase;
 pub mod ordering_state_computer;
+pub mod persisting_phase;
 
 #[cfg(test)]
 mod tests;
+

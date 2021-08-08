@@ -40,13 +40,14 @@ use anyhow::anyhow;
 
 use diem_types::epoch_change::EpochChangeProof;
 use futures::{
-    channel::{mpsc::UnboundedReceiver},
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     prelude::stream::FusedStream,
 };
 use crate::experimental::execution_phase::ResetEventType;
 use std::collections::VecDeque;
 use diem_config::config::DEFAULT_COMMIT_DECISION_GRACE_PERIOD;
 use diem_types::epoch_state::EpochState;
+use crate::experimental::persisting_phase::PersistingChannelType;
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -184,6 +185,7 @@ pub struct CommitPhase {
     reset_event_rx: Receiver<ResetEventType>,
     in_epoch: bool,
     local_commit_decision_history: VecDeque<LedgerInfoWithSignatures>,
+    persist_phase_channel: Option<UnboundedSender<PersistingChannelType>>,
 }
 
 /// Wrapper for ExecutionProxy.commit
@@ -238,7 +240,7 @@ impl Drop for CommitPhase {
 }
 
 impl CommitPhase {
-    pub fn new(
+    pub fn new_with_persisting_phase(
         commit_channel_recv: UnboundedReceiver<CommitChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
         commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
@@ -248,6 +250,7 @@ impl CommitPhase {
         back_pressure: Arc<AtomicU64>,
         network_sender: NetworkSender,
         reset_event_rx: Receiver<ResetEventType>,
+        persist_phase_channel: Option<UnboundedSender<PersistingChannelType>>,
     ) -> Self {
         info!("commit phase new");
         let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitPhaseTimeoutEvent>(
@@ -269,7 +272,33 @@ impl CommitPhase {
             reset_event_rx,
             in_epoch: true,
             local_commit_decision_history: VecDeque::new(),
+            persist_phase_channel: persist_phase_channel,
         }
+    }
+
+    pub fn new(
+        commit_channel_recv: UnboundedReceiver<CommitChannelType>,
+        execution_proxy: Arc<dyn StateComputer>,
+        commit_msg_rx: diem_channel::Receiver<CommitPhaseMessageKey, VerifiedEvent>,
+        verifier: ValidatorVerifier,
+        safety_rules: Arc<Mutex<MetricsSafetyRules>>,
+        author: Author,
+        back_pressure: Arc<AtomicU64>,
+        network_sender: NetworkSender,
+        reset_event_rx: Receiver<ResetEventType>,
+    ) -> Self {
+        Self::new_with_persisting_phase(
+            commit_channel_recv,
+            execution_proxy,
+            commit_msg_rx,
+            verifier,
+            safety_rules,
+            author,
+            back_pressure,
+            network_sender,
+            reset_event_rx,
+            None,
+        )
     }
 
     /// Notified when receiving a commit vote message (assuming verified)
@@ -351,12 +380,24 @@ impl CommitPhase {
         let pending_blocks = self.blocks.take().unwrap();
         let round = pending_blocks.round();
 
-        commit(&self.execution_proxy, pending_blocks)
-            .await
-            .expect("Failed to commit the executed blocks.");
 
-        // update the back pressure
-        self.back_pressure.store(round, Ordering::SeqCst);
+        if let Some(persist_channel) = self.persist_phase_channel.as_mut() {
+            persist_channel.send(PersistingChannelType(
+               pending_blocks.blocks.clone(),
+                pending_blocks.ledger_info_sig().clone(),
+                pending_blocks.take_callback(),
+            ))
+                .await
+                .expect("Failed to send the executed blocks to the persisting phase");
+        }
+        else {
+            commit(&self.execution_proxy, pending_blocks)
+                .await
+                .expect("Failed to commit the executed blocks.");
+
+            // update the back pressure
+            self.back_pressure.store(round, Ordering::SeqCst);
+        }
 
         if commit_ledger_info.ledger_info().ends_epoch() {
             debug!(
