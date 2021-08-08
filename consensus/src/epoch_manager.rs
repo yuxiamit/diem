@@ -58,6 +58,7 @@ use std::{
     time::Duration,
 };
 use crate::experimental::execution_phase::ResetEventType;
+use crate::experimental::persisting_phase::{PersistingPhase, PersistingChannelType};
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -309,7 +310,7 @@ impl EpochManager {
         proposer_election: Box<dyn ProposerElection + Send + Sync>,
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         network_sender: NetworkSender,
-    ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase)> {
+    ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase, PersistingPhase)> {
         let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
         let (execution_phase_reset_tx, execution_phase_reset_rx) =
@@ -373,7 +374,10 @@ impl EpochManager {
         self.back_pressure
             .store(0, std::sync::atomic::Ordering::SeqCst);
 
-        let commit_phase = CommitPhase::new(
+        let (persist_phase_tx, persist_phase_rx) =
+            unbounded::<PersistingChannelType>();
+
+        let commit_phase = CommitPhase::new_with_persisting_phase(
             commit_phase_rx,
             self.commit_state_computer.clone(),
             commit_msg_rx,
@@ -383,6 +387,13 @@ impl EpochManager {
             self.back_pressure.clone(),
             network_sender.clone(),
             commit_phase_reset_rx,
+            Some(persist_phase_tx),
+        );
+
+        let persisting_phase = PersistingPhase::new(
+            persist_phase_rx,
+            self.commit_state_computer.clone(),
+            self.back_pressure.clone(),
         );
 
         let round_manager = RoundManager::new_with_decoupled_execution(
@@ -400,7 +411,7 @@ impl EpochManager {
             self.config.back_pressure_limit,
         );
 
-        Ok((round_manager, execution_phase, commit_phase))
+        Ok((round_manager, execution_phase, commit_phase, persisting_phase))
     }
 
     async fn start_round_manager(&mut self, recovery_data: RecoveryData, epoch_state: EpochState) {
@@ -448,7 +459,12 @@ impl EpochManager {
 
         let mut processor = if self.config.decoupled_execution {
             info!(epoch = epoch, "starting decoupled execution");
-            let (round_manager, execution_phase, commit_phase) = self
+            let (
+                round_manager,
+                execution_phase,
+                commit_phase,
+                persisting_phase,
+            ) = self
                 .prepare_decoupled_execution(
                     epoch,
                     recovery_data,
@@ -464,6 +480,7 @@ impl EpochManager {
 
             tokio::spawn(execution_phase.start());
             tokio::spawn(commit_phase.start());
+            tokio::spawn(persisting_phase.start());
 
             round_manager
         } else {
