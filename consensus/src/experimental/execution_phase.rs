@@ -169,7 +169,7 @@ impl ExecutionPhase {
     }
 
     pub async fn try_execute_blocks(&mut self) {
-        info!("try_execute_blocks");
+        //info!("try_execute_blocks");
         if let Some(pd) = self.pending_blocks.as_ref() {
             let vecblock = pd.vecblocks();
             let pending_ledger_info = pd.ledger_info();
@@ -228,7 +228,7 @@ impl ExecutionPhase {
     }
 
     pub async fn process_ordered_blocks(&mut self, execution_channel_type: ExecutionChannelType) {
-        info!("process_ordered_blocks");
+        //info!("process_ordered_blocks");
         let blocks_to_push = execution_channel_type.0.clone();
         // execute the blocks with execution_correctness_client
 
@@ -244,12 +244,15 @@ impl ExecutionPhase {
         // main loop
         info!("execution phase started");
         while self.in_epoch {
+            /*
             debug!("execution phase status: pending {}, executor_channel_rx alive {}, reset_event_channel_rx {}",
                 self.pending_blocks.is_some(),
                 !self.executor_channel_rx.is_terminated(),
                 !self.reset_event_channel_rx.is_terminated());
+
+             */
             if self.pending_blocks.is_none() {
-                debug!("pending blocks is none");
+                //debug!("pending blocks is none");
 
                 if self.reset_event_channel_rx.is_terminated() || self.executor_channel_rx.is_terminated() {
                     break
@@ -275,10 +278,10 @@ impl ExecutionPhase {
                     //}
                     complete => break,
                 };
-                debug!("got message");
+                //debug!("got message");
             }
             else {
-                debug!("pending blocks is some");
+                //debug!("pending blocks is some");
                 self.try_execute_blocks().await;
                 if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
                     self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
@@ -292,9 +295,5 @@ impl ExecutionPhase {
             }
         }
         info!("execution phase stops");
-        debug!("execution phase status: pending {}, executor_channel_rx alive {}, reset_event_channel_rx {}",
-            self.pending_blocks.is_some(),
-            !self.executor_channel_rx.is_terminated(),
-            !self.reset_event_channel_rx.is_terminated());
     }
 }

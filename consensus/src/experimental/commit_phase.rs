@@ -59,7 +59,7 @@ decision message helps the slower nodes to quickly catch up without
 having to collect the signatures.
 */
 
-const COMMIT_PHASE_TIMEOUT_SEC: u64 = 1; // retry timeout in seconds
+const COMMIT_PHASE_TIMEOUT_MILLISEC: u64 = 500; // retry timeout in milli seconds
 
 pub struct CommitChannelType(
     pub Vec<ExecutedBlock>,
@@ -213,7 +213,7 @@ macro_rules! report_err {
     ($result:expr, $error_string:literal) => {
         if let Err(err) = $result {
             counters::ERROR_COUNT.inc();
-            error!(error = err.to_string(), $error_string,)
+            //error!(error = err.to_string(), $error_string,)
         }
     };
 }
@@ -223,7 +223,7 @@ async fn sleep_and_retry(
     commit_phase_timeout_event: CommitPhaseTimeoutEvent,
     mut notification: Sender<CommitPhaseTimeoutEvent>,
 ) {
-    time::sleep(time::Duration::from_secs(COMMIT_PHASE_TIMEOUT_SEC)).await;
+    time::sleep(time::Duration::from_millis(COMMIT_PHASE_TIMEOUT_MILLISEC)).await;
     report_err!(
         notification.send(commit_phase_timeout_event).await,
         "Error in sending timeout events"
@@ -340,11 +340,6 @@ impl CommitPhase {
 
         let commit_ledger_info = self.blocks.as_ref().unwrap().ledger_info_sig().clone();
 
-        self.local_commit_decision_history.push_back(commit_ledger_info.clone());
-        if self.local_commit_decision_history.len() > DEFAULT_COMMIT_DECISION_GRACE_PERIOD {
-            self.local_commit_decision_history.pop_front();
-        }
-
         /*
         self.network_sender
             .broadcast(ConsensusMsg::CommitDecisionMsg(Box::new(
@@ -360,22 +355,27 @@ impl CommitPhase {
             .await
             .expect("Failed to commit the executed blocks.");
 
+        // update the back pressure
+        self.back_pressure.store(round, Ordering::SeqCst);
+
         if commit_ledger_info.ledger_info().ends_epoch() {
             debug!(
-                        "notify epoch change: {:?}",
-                        commit_ledger_info.ledger_info().next_epoch_state()
-                    );
+                "notify epoch change: {:?}",
+                commit_ledger_info.ledger_info().next_epoch_state()
+            );
             self.network_sender
                 .notify_epoch_change(EpochChangeProof::new(
-                    vec![commit_ledger_info],
+                    vec![commit_ledger_info.clone()],
                     /* more = */ false,
                 ))
                 .await;
             self.in_epoch = false;
         }
 
-        // update the back pressure
-        self.back_pressure.store(round, Ordering::SeqCst);
+        self.local_commit_decision_history.push_back(commit_ledger_info);
+        if self.local_commit_decision_history.len() > DEFAULT_COMMIT_DECISION_GRACE_PERIOD {
+            self.local_commit_decision_history.pop_front();
+        }
 
         // now self.blocks is none, ready for the next batch of blocks
         Ok(())
@@ -548,12 +548,13 @@ impl CommitPhase {
     pub async fn start(mut self) {
         info!("commit phase starts");
         while self.in_epoch {
-            debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
+            /*debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
                 self.blocks.is_some(),
                 !self.commit_msg_rx.is_terminated(),
                 !self.reset_event_rx.is_terminated(),
                 !self.commit_channel_recv.is_terminated(),
             );
+             */
             // if we are still collecting the signatures
             if self.commit_channel_recv.is_terminated() || self.commit_msg_rx.is_terminated() {
                 break;
@@ -562,7 +563,7 @@ impl CommitPhase {
                 biased;
                 // callback event might come when self.blocks is not empty
                 Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
-                    info!("reset_event_rx");
+                    //info!("reset_event_rx");
                     monitor!("process_reset_event",
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
@@ -571,12 +572,12 @@ impl CommitPhase {
                     );
                 }
                 Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
-                    info!("timeout_event_rx");
+                    //info!("timeout_event_rx");
                     monitor!("process_retry_event", self.process_retry_event(retry_event).await);
                 }
                 // process messages dispatched from epoch_manager
                 Some(msg) = self.commit_msg_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
-                    info!("commit_msg_rx");
+                    //info!("commit_msg_rx");
                     match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
@@ -602,7 +603,7 @@ impl CommitPhase {
                 }
                 Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),
                     if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_none() => {
-                        info!("commit_channel_recv");
+                        //info!("commit_channel_recv");
                         monitor!("process_executed_blocks",
                             report_err!(
                                 // receive new blocks from execution phase
