@@ -267,11 +267,11 @@ impl ExecutionPhase {
                 //    sleep(Duration::from_secs(2));
                 //    tx.send(1);
                 //});
-                select! {
-                    executor_channel_msg = self.executor_channel_rx.select_next_some() => {
+                tokio::select! {
+                    Some(executor_channel_msg) = self.executor_channel_rx.next() => {
                         self.process_ordered_blocks(executor_channel_msg).await;
                     }
-                    reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
+                    Some(reset_event_callback) = self.reset_event_channel_rx.next() => {
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
                         })
@@ -280,12 +280,12 @@ impl ExecutionPhase {
                     //_ = rx => {
                     //    info!("timer picked up");
                     //}
-                    complete => break,
+                    else => break,
                 };
                 debug!("got message");
             }
             else {
-                //debug!("pending blocks is some");
+                debug!("pending blocks is some");
                 self.try_execute_blocks().await;
                 if self.pending_blocks.is_none() {
                     continue;

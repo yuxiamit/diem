@@ -59,6 +59,8 @@ use std::{
 };
 use tokio::runtime::Runtime;
 use crate::experimental::execution_phase::ResetEventType;
+use std::hint::spin_loop;
+use crate::test_utils::EmptyStateComputer;
 
 pub fn prepare_commit_phase_with_block_store_state_computer(
     runtime: &Runtime,
@@ -124,10 +126,11 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     // OrderingStateComputer::sync_to might block the inner state computer
     let (execution_phase_reset_tx, _) = channel::new_test::<ResetEventType>(1);
 
-    let state_computer = Arc::new(OrderingStateComputer::new(
+    let output_state_computer = Arc::new(OrderingStateComputer::new_with_name(
         commit_result_tx,
-        block_store_state_computer.clone(),
+        block_store_state_computer.clone(), //Arc::new(EmptyStateComputer),
         execution_phase_reset_tx,
+        String::from("output_state_computer"),
     ));
 
     let time_service = Arc::new(ClockTimeService::new(runtime.handle().clone()));
@@ -159,7 +162,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
 
     let commit_phase = CommitPhase::new(
         commit_rx,
-        state_computer.clone(),
+        output_state_computer.clone(),
         msg_rx,
         epoch_state.verifier.clone(),
         safety_rules_container.clone(),
@@ -206,6 +209,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
             } else {
                 break;
             }
+            spin_loop();
         }
     });
 
@@ -217,7 +221,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
         self_loop_rx,          // channel to receive message from the commit phase itself
         safety_rules_container,
         signers,
-        state_computer,
+        output_state_computer,
         epoch_state.verifier,
         commit_phase,
         block_store,

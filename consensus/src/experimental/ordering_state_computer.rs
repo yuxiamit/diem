@@ -36,6 +36,7 @@ pub struct OrderingStateComputer {
     executor_channel: UnboundedSender<ExecutionChannelType>,
     state_computer_for_sync: Arc<dyn StateComputer>,
     reset_event_channel_tx: Sender<ResetEventType>,
+    name: String,
 }
 
 impl OrderingStateComputer {
@@ -49,16 +50,37 @@ impl OrderingStateComputer {
             executor_channel,
             state_computer_for_sync,
             reset_event_channel_tx,
+            name: String::from(""),
+        }
+    }
+
+    pub fn new_with_name(
+        executor_channel: UnboundedSender<ExecutionChannelType>,
+        state_computer_for_sync: Arc<dyn StateComputer>,
+        reset_event_channel_tx: Sender<ResetEventType>,
+        name: String,
+    ) -> Self {
+        info!("ordering state computer new");
+        Self {
+            executor_channel,
+            state_computer_for_sync,
+            reset_event_channel_tx,
+            name,
         }
     }
 }
 
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
+        info!("Start dropping");
         if let Err(e) = block_on(notify_downstream_reset(&self.reset_event_channel_tx, true)) {
             error!("Error in reseting before get dropped {}", e.to_string());
         }
-        info!("ordering state computer dropped");
+        info!(
+            "ordering state computer [{}] dropped, inner state computer ref count {}",
+            self.name,
+            Arc::strong_count(&self.state_computer_for_sync),
+        );
     }
 }
 

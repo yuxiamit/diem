@@ -238,7 +238,11 @@ async fn sleep_and_retry(
 // This trivial implementation of `drop` adds a print to console.
 impl Drop for CommitPhase {
     fn drop(&mut self) {
-        info!("Dropping commit phase");
+        info!("Dropping commit phase, execution proxy counter {}, safety_rules {}, back pressure {}",
+            Arc::strong_count(&self.execution_proxy),
+            Arc::strong_count(&self.safety_rules),
+            Arc::strong_count(&self.back_pressure),
+        );
     }
 }
 

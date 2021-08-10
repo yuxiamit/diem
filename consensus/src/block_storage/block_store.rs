@@ -162,21 +162,6 @@ pub fn path_from_commit_root_with_block_tree(
     block_tree.read().path_from_commit_root(block_id)
 }
 
-pub fn retry_execute_from_root(
-    parent_block_id: HashValue,
-    target_block: Block,
-    block_tree: Arc<RwLock<BlockTree>>,
-    state_computer: Arc<dyn StateComputer>,
-) -> anyhow::Result<ExecutedBlock, Error> {
-    // recover the block tree in executor
-    let blocks_to_reexecute =
-        path_from_commit_root_with_block_tree(parent_block_id, block_tree).unwrap_or_else(Vec::new);
-
-    for block in blocks_to_reexecute {
-        execute_block_with_state_computer(block.block().clone(), &state_computer)?;
-    }
-    execute_block_with_state_computer(target_block, &state_computer)
-}
 
 impl BlockStore {
     pub fn new(
