@@ -41,13 +41,15 @@ use anyhow::anyhow;
 use diem_types::epoch_change::EpochChangeProof;
 use futures::{
     channel::mpsc::{UnboundedReceiver, UnboundedSender},
+    channel::oneshot,
     prelude::stream::FusedStream,
 };
-use crate::experimental::execution_phase::ResetEventType;
+use crate::experimental::execution_phase::{ResetEventType, ResetAck, notify_downstream_reset};
 use std::collections::VecDeque;
 use diem_config::config::DEFAULT_COMMIT_DECISION_GRACE_PERIOD;
 use diem_types::epoch_state::EpochState;
 use crate::experimental::persisting_phase::PersistingChannelType;
+use core::hint;
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -59,6 +61,15 @@ decision message together with the quorum of signatures. The commit
 decision message helps the slower nodes to quickly catch up without
 having to collect the signatures.
 */
+
+macro_rules! report_err {
+    ($result:expr, $error_string:literal) => {
+        if let Err(err) = $result {
+            counters::ERROR_COUNT.inc();
+            error!(error = err.to_string(), $error_string,)
+        }
+    };
+}
 
 const COMMIT_PHASE_TIMEOUT_MILLISEC: u64 = 200; // retry timeout in milli seconds
 
@@ -186,6 +197,7 @@ pub struct CommitPhase {
     in_epoch: bool,
     local_commit_decision_history: VecDeque<LedgerInfoWithSignatures>,
     persist_phase_channel: Option<UnboundedSender<PersistingChannelType>>,
+    persist_phase_reset_tx: Option<Sender<ResetEventType>>,
 }
 
 /// Wrapper for ExecutionProxy.commit
@@ -209,15 +221,6 @@ pub async fn commit(
         .expect("Failed to persist commit");
 
     Ok(())
-}
-
-macro_rules! report_err {
-    ($result:expr, $error_string:literal) => {
-        if let Err(err) = $result {
-            counters::ERROR_COUNT.inc();
-            //error!(error = err.to_string(), $error_string,)
-        }
-    };
 }
 
 /// shortcut for sending a message with a timeout retry event
@@ -251,6 +254,7 @@ impl CommitPhase {
         network_sender: NetworkSender,
         reset_event_rx: Receiver<ResetEventType>,
         persist_phase_channel: Option<UnboundedSender<PersistingChannelType>>,
+        persist_phase_reset_tx: Option<Sender<ResetEventType>>,
     ) -> Self {
         info!("commit phase new");
         let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitPhaseTimeoutEvent>(
@@ -273,6 +277,7 @@ impl CommitPhase {
             in_epoch: true,
             local_commit_decision_history: VecDeque::new(),
             persist_phase_channel: persist_phase_channel,
+            persist_phase_reset_tx,
         }
     }
 
@@ -297,6 +302,7 @@ impl CommitPhase {
             back_pressure,
             network_sender,
             reset_event_rx,
+            None,
             None,
         )
     }
@@ -382,6 +388,7 @@ impl CommitPhase {
 
 
         if let Some(persist_channel) = self.persist_phase_channel.as_mut() {
+            info!("Send to the persist phase {}", pending_blocks.ledger_info_sig());
             persist_channel.send(PersistingChannelType(
                pending_blocks.blocks.clone(),
                 pending_blocks.ledger_info_sig().clone(),
@@ -537,10 +544,18 @@ impl CommitPhase {
 
         let ResetEventType { reset_callback, reconfig } = reset_event;
 
+        if let Some(reset_tx) = self.persist_phase_reset_tx.as_mut() {
+            if let Err(e) = notify_downstream_reset(&reset_tx, reconfig).await {
+                error!("Error in requesting persisting phase to reset: {}", e.to_string());
+            }
+        }
+
         // exhaust the commit channel
         while !self.commit_msg_rx.is_terminated()
             && !self.commit_channel_recv.is_terminated()
-            && self.commit_channel_recv.next().now_or_never().is_some() {}
+            && self.commit_channel_recv.next().now_or_never().is_some() {
+            hint::spin_loop();
+        }
 
         /*
         // we should also exhaust the message channel
@@ -589,13 +604,13 @@ impl CommitPhase {
     pub async fn start(mut self) {
         info!("commit phase starts");
         while self.in_epoch {
-            /*debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
+            debug!("Channel status self.block.is_some: {}, commit_msg_rx alive:{}, reset_event_rx alive:{}, commit_channel_recv alive:{}",
                 self.blocks.is_some(),
                 !self.commit_msg_rx.is_terminated(),
                 !self.reset_event_rx.is_terminated(),
                 !self.commit_channel_recv.is_terminated(),
             );
-             */
+
             // if we are still collecting the signatures
             if self.commit_channel_recv.is_terminated() || self.commit_msg_rx.is_terminated() {
                 break;
@@ -604,7 +619,7 @@ impl CommitPhase {
                 biased;
                 // process messages dispatched from epoch_manager
                 Some(msg) = self.commit_msg_rx.next(), if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_some() => {
-                    //info!("commit_msg_rx");
+                    info!("commit_msg_rx");
                     match msg {
                             VerifiedEvent::CommitVote(cv) => {
                                 monitor!(
@@ -630,7 +645,7 @@ impl CommitPhase {
                 }
                 Some(CommitChannelType(blocks, ordered_ledger_info, callback)) = self.commit_channel_recv.next(),
                     if !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() && self.blocks.is_none() => {
-                        //info!("commit_channel_recv");
+                        info!("commit_channel_recv");
                         monitor!("process_executed_blocks",
                             report_err!(
                                 // receive new blocks from execution phase
@@ -641,12 +656,12 @@ impl CommitPhase {
                         )
                 }
                 Some(retry_event) = self.timeout_event_rx.next(), if !self.timeout_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated()  => {
-                    //info!("timeout_event_rx");
+                    info!("timeout_event_rx");
                     monitor!("process_retry_event", self.process_retry_event(retry_event).await);
                 }
                 // callback event might come when self.blocks is not empty
                 Some(reset_event_callback) = self.reset_event_rx.next(), if !self.reset_event_rx.is_terminated() && !self.commit_channel_recv.is_terminated() && !self.commit_msg_rx.is_terminated() => {
-                    //info!("reset_event_rx");
+                    info!("reset_event_rx");
                     monitor!("process_reset_event",
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),

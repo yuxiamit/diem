@@ -142,12 +142,6 @@ fn decoupled_execution_integration() {
             panic!("Expecting a commited block")
         }
 
-        // and it sends a commit decision
-        assert!(matches!(
-            self_loop_rx.next().await,
-            Some(Event::Message(_, ConsensusMsg::CommitDecisionMsg(_))),
-        ));
-
         // fill in two dummy items to commit_tx to make sure commit_phase::check_commit has finished
         let (blocks_1, li_1) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
         let (blocks_2, li_2) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
@@ -174,5 +168,7 @@ fn decoupled_execution_integration() {
         assert!(!block_store_handle.block_exists(a2.block().id()));
         // ..until a3
         assert!(block_store_handle.block_exists(a3.block().id()));
+
+        println!("test finished");
     });
 }

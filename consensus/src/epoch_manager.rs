@@ -59,6 +59,7 @@ use std::{
 };
 use crate::experimental::execution_phase::ResetEventType;
 use crate::experimental::persisting_phase::{PersistingPhase, PersistingChannelType};
+use std::thread::sleep;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -377,6 +378,12 @@ impl EpochManager {
         let (persist_phase_tx, persist_phase_rx) =
             unbounded::<PersistingChannelType>();
 
+        let (persist_phase_reset_tx, persist_phase_reset_rx) =
+            channel::new::<ResetEventType>(
+                1,
+                &counters::DECOUPLED_EXECUTION__PERSISTING_PHASE_RESET_CHANNEL,
+            );
+
         let commit_phase = CommitPhase::new_with_persisting_phase(
             commit_phase_rx,
             self.commit_state_computer.clone(),
@@ -388,10 +395,12 @@ impl EpochManager {
             network_sender.clone(),
             commit_phase_reset_rx,
             Some(persist_phase_tx),
+            Some(persist_phase_reset_tx),
         );
 
         let persisting_phase = PersistingPhase::new(
             persist_phase_rx,
+            persist_phase_reset_rx,
             self.commit_state_computer.clone(),
             self.back_pressure.clone(),
         );
@@ -419,6 +428,8 @@ impl EpochManager {
         self.processor = None;
         // Release the previous Commit Phase
         self.commit_msg_tx = None;
+        // let the execution phase drop
+        sleep(Duration::from_millis(200));
         let epoch = epoch_state.epoch;
         counters::EPOCH.set(epoch_state.epoch as i64);
         counters::CURRENT_EPOCH_VALIDATORS.set(epoch_state.verifier.len() as i64);

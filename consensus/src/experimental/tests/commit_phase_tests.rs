@@ -150,11 +150,6 @@ mod commit_phase_e2e_tests {
 
             // it commits the block
             assert!(commit_result_rx.next().await.is_some());
-            // and it sends a commit decision
-            assert!(matches!(
-                self_loop_rx.next().await,
-                Some(Event::Message(_, ConsensusMsg::CommitDecisionMsg(_))),
-            ));
         });
     }
 
@@ -216,11 +211,6 @@ mod commit_phase_e2e_tests {
 
             // it commits the block
             assert!(commit_result_rx.next().await.is_some());
-            // and it sends a commit decision
-            assert!(matches!(
-                self_loop_rx.next().await,
-                Some(Event::Message(_, ConsensusMsg::CommitDecisionMsg(_))),
-            ));
         });
     }
 

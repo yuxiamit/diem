@@ -24,7 +24,8 @@ use crate::{
     state_replication::StateComputerCommitCallBackType,
 };
 use futures::channel::oneshot;
-use crate::experimental::execution_phase::ResetEventType;
+use crate::experimental::execution_phase::{ResetEventType, notify_downstream_reset};
+use futures::executor::block_on;
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
@@ -54,6 +55,9 @@ impl OrderingStateComputer {
 
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
+        if let Err(e) = block_on(notify_downstream_reset(&self.reset_event_channel_tx, true)) {
+            error!("Error in reseting before get dropped {}", e.to_string());
+        }
         info!("ordering state computer dropped");
     }
 }
@@ -114,16 +118,11 @@ impl StateComputer for OrderingStateComputer {
         );
 
         // reset execution phase and commit phase
-        let (tx, rx) = oneshot::channel::<ResetAck>();
-        self.reset_event_channel_tx
-            .clone()
-            .send(ResetEventType{
-                reset_callback: tx,
-                reconfig: target.ledger_info().ends_epoch(),
-            })
-            .await
-            .map_err(|_| Error::ResetDropped)?;
-        rx.await.map_err(|_| Error::ResetDropped)?;
+        if let Err(e) = notify_downstream_reset(&self.reset_event_channel_tx, target.ledger_info().ends_epoch()).await {
+            error!("Error in requesting execution phase to reset: {}", e.to_string());
+        }
+
+        debug!("resetting executor");
 
         // has to after reset to avoid racing (committing the blocks after the sync)
         self.state_computer_for_sync.sync_to(target).await?;

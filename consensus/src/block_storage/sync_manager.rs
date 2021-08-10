@@ -65,11 +65,13 @@ impl BlockStore {
         self.commit_root().round() < li.commit_info().round()
 
             && (
-            // we are in sync only mode, or...
-            (sync_only &&
+            // the sync mode is set artificially
+                (sync_only && self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT > self.ordered_root().round())
+                ||
             // we are far behind that no chance of revive through
                 // commit phase (no commit vote/decision will be received), or ..
-                self.commit_root().round() + DEFAULT_COMMIT_DECISION_GRACE_PERIOD as u64 <= li.commit_info().round()) ||
+                self.commit_root().round() + DEFAULT_COMMIT_DECISION_GRACE_PERIOD as u64 <= li.commit_info().round()
+             ||
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
             )

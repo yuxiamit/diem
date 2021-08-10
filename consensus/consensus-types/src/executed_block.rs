@@ -106,7 +106,6 @@ impl ExecutedBlock {
     }
 
     pub fn transactions_to_commit(&self) -> Vec<Transaction> {
-        // reconfiguration suffix don't execute
         if self.quorum_cert().ends_epoch() {
             return vec![];
         }

@@ -211,7 +211,7 @@ impl BlockStore {
             .sort_unstable_by(|qc1, qc2| qc1.commit_info().round().cmp(&qc2.commit_info().round()));
 
         for qc in certs {
-            if qc.vote_data().parent().id() != qc.vote_data().proposed().id() {
+            if qc.commit_info().round() > self.commit_root().round() {
                 info!(
                     "trying to commit to round {} with ledger info {}",
                     qc.commit_info().round(),
@@ -268,6 +268,10 @@ impl BlockStore {
             "root qc state id {} doesn't match committed trees {}",
             root_qc.certified_block().executed_state_id(),
             root_metadata.accu_hash,
+        );
+
+        debug!("Blocks used to construct block_store: {}",
+            blocks.iter().map(|b| format!("\n\t{}", b)).collect::<Vec<String>>().concat()
         );
 
         let result = StateComputeResult::new(

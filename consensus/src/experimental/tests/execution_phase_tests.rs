@@ -149,7 +149,7 @@ fn test_execution_phase_drop() {
         mut execution_phase_tx,
         _commit_phase_rx,
         execution_phase_reset_tx,
-        _commit_phase_reset_rx,
+        mut commit_phase_reset_rx,
     ) = prepare_execution_phase();
 
     let mut join_handle = runtime.spawn(execution_phase.start());
@@ -192,6 +192,11 @@ fn test_execution_phase_drop() {
             empty_state_computer_call_back(),
             empty_execute_phase_callback(),
         ).await.unwrap();
+
+        tokio::spawn(async move {
+            let ResetEventType { reset_callback: tx2, reconfig: _} = commit_phase_reset_rx.next().await.unwrap();
+            tx2.send(reset_ack_new()).ok();
+        });
 
         sleep(Duration::from_secs(1)).await;
 
