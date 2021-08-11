@@ -39,17 +39,14 @@ use crate::{
 use anyhow::anyhow;
 
 use crate::experimental::{
-    execution_phase::{notify_downstream_reset, ResetAck, ResetEventType},
+    execution_phase::{notify_downstream_reset, ResetEventType},
     persisting_phase::PersistingChannelType,
 };
 use core::hint;
 use diem_config::config::DEFAULT_COMMIT_DECISION_GRACE_PERIOD;
-use diem_types::{epoch_change::EpochChangeProof, epoch_state::EpochState};
+use diem_types::epoch_change::EpochChangeProof;
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     prelude::stream::FusedStream,
 };
 use std::collections::VecDeque;
@@ -486,7 +483,7 @@ impl CommitPhase {
                         signature,
                         self.local_commit_decision_history
                             .iter()
-                            .map(|li| li.clone())
+                            .cloned()
                             .collect::<Vec<LedgerInfoWithSignatures>>(),
                     );
 
@@ -560,7 +557,7 @@ impl CommitPhase {
         } = reset_event;
 
         if let Some(reset_tx) = self.persist_phase_reset_tx.as_mut() {
-            if let Err(e) = notify_downstream_reset(&reset_tx, reconfig).await {
+            if let Err(e) = notify_downstream_reset(reset_tx, reconfig).await {
                 error!(
                     "Error in requesting persisting phase to reset: {}",
                     e.to_string()

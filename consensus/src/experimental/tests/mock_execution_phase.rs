@@ -1,31 +1,18 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    experimental::{commit_phase::CommitChannelType, errors::Error},
-    state_replication::{StateComputer, StateComputerCommitCallBackType},
-};
-use channel::{Receiver, Sender};
-use consensus_types::{block::Block, executed_block::ExecutedBlock};
+use channel::Receiver;
 
 use crate::experimental::execution_phase::{
     reset_ack_new, ExecutionChannelType, ExecutionPendingBlocks, ResetEventType,
 };
-use core::hint;
+
 use diem_logger::prelude::*;
-use diem_types::ledger_info::LedgerInfoWithSignatures;
+
 use executor_types::Error as ExecutionError;
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
-    prelude::stream::FusedStream,
-    select,
-    task::Poll,
-    FutureExt, SinkExt, Stream, StreamExt,
+    channel::mpsc::UnboundedReceiver, prelude::stream::FusedStream, select, FutureExt, StreamExt,
 };
-use std::{pin::Pin, sync::Arc, thread::sleep, time::Duration};
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from

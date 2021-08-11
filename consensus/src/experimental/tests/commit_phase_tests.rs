@@ -10,7 +10,7 @@ use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
 use std::sync::Arc;
 
 use crate::{metrics_safety_rules::MetricsSafetyRules, network_interface::ConsensusMsg};
-use channel::{diem_channel, Receiver, Sender};
+use channel::{Receiver, Sender};
 use diem_infallible::Mutex;
 use futures::{SinkExt, StreamExt};
 
@@ -45,7 +45,6 @@ use crate::{
 };
 
 use crate::experimental::{
-    commit_phase::CommitPhaseMessageKey,
     execution_phase::{ResetAck, ResetEventType},
     tests::test_utils::{
         prepare_commit_phase_with_block_store_state_computer,

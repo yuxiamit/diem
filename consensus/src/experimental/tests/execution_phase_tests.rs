@@ -145,15 +145,15 @@ fn test_execution_phase_drop() {
     let (
         execution_phase,
         _random_execute_result_root_hash,
-        mut execution_phase_tx,
+        execution_phase_tx,
         _commit_phase_rx,
         execution_phase_reset_tx,
         mut commit_phase_reset_rx,
     ) = prepare_execution_phase();
 
-    let mut join_handle = runtime.spawn(execution_phase.start());
+    let join_handle = runtime.spawn(execution_phase.start());
 
-    let mut ordering_state_computer = OrderingStateComputer::new(
+    let ordering_state_computer = OrderingStateComputer::new(
         execution_phase_tx,
         Arc::new(EmptyStateComputer),
         execution_phase_reset_tx,

@@ -288,8 +288,7 @@ impl BlockStore {
 
         if blocks
             .iter()
-            .position(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id())
-            .is_some()
+            .any(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id())
         {
             //blocks = blocks[..end_idx + 1].to_vec(); // trim
 

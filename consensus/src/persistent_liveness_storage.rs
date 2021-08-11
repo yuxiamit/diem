@@ -401,7 +401,7 @@ impl PersistentLivenessStorage for StorageWriteProxy {
                     "Starting up the consensus state machine with recovery data - [last_vote {}], [highest timeout certificate: {}], [ledger_recovery {}]",
                     initial_data.last_vote.as_ref().map_or("None".to_string(), |v| v.to_string()),
                     initial_data.highest_timeout_certificate.as_ref().map_or("None".to_string(), |v| v.to_string()),
-                    ledger_recovery_data.storage_ledger.clone(),
+                    ledger_recovery_data.storage_ledger,
                 );
 
                 LivenessStorageData::RecoveryData(initial_data)

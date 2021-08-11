@@ -412,7 +412,7 @@ impl RoundManager {
     ) -> anyhow::Result<()> {
         let local_sync_info = self.block_store.sync_info();
         // debug!("called local_sync_info with {}, local {}, from {}", sync_info, local_sync_info, author);
-        if help_remote && local_sync_info.has_newer_certificates(&sync_info) {
+        if help_remote && local_sync_info.has_newer_certificates(sync_info) {
             counters::SYNC_INFO_MSGS_SENT_COUNT.inc();
             debug!(
                 self.new_log(LogEvent::HelpPeerSync).remote_peer(author),

@@ -191,8 +191,7 @@ impl BlockStore {
         // reproduce the same batches (important for the commit phase)
 
         let mut certs = self.inner.read().get_all_quorum_certs_with_commit_info();
-        certs
-            .sort_unstable_by(|qc1, qc2| qc1.commit_info().round().cmp(&qc2.commit_info().round()));
+        certs.sort_unstable_by_key(|qc| qc.commit_info().round());
 
         for qc in certs {
             if qc.commit_info().round() > self.commit_root().round() {
@@ -345,7 +344,7 @@ impl BlockStore {
         let block_tree_in_commit_callback = self.inner.clone();
         let block_tree_in_execution_failure_callback = self.inner.clone();
         let storage = self.storage.clone();
-        let commit_root_in_commit_callback = self.commit_root().clone();
+        let commit_root_in_commit_callback = self.commit_root();
         // asynchronously execute and commit
         self.state_computer
             .commit(

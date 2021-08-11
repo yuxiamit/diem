@@ -17,15 +17,11 @@ use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use std::{boxed::Box, sync::Arc};
 
 use crate::{
-    experimental::{
-        errors::Error,
-        execution_phase::{
-            notify_downstream_reset, ExecutionChannelType, ResetAck, ResetEventType,
-        },
+    experimental::execution_phase::{
+        notify_downstream_reset, ExecutionChannelType, ResetEventType,
     },
     state_replication::StateComputerCommitCallBackType,
 };
-use futures::{channel::oneshot, executor::block_on};
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.

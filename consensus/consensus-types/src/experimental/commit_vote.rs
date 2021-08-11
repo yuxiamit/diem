@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::{Author, Round};
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{
     block_info::BlockInfo,
     ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
     validator_signer::ValidatorSigner,
-    validator_verifier::{ValidatorVerifier, VerifyError},
+    validator_verifier::ValidatorVerifier,
 };
 use serde::{Deserialize, Serialize};
 use short_hex_str::AsShortHexStr;

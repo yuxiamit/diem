@@ -20,7 +20,7 @@ use futures::{
     prelude::stream::FusedStream,
     select, FutureExt, SinkExt, StreamExt,
 };
-use std::{sync::Arc, thread::sleep, time::Duration};
+use std::sync::Arc;
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from

@@ -7,7 +7,7 @@ use crate::{
         commit_phase::{
             CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
         },
-        execution_phase::{ExecutionChannelType, ResetAck, ResetEventType},
+        execution_phase::{ExecutionChannelType, ResetEventType},
         ordering_state_computer::OrderingStateComputer,
     },
     metrics_safety_rules::MetricsSafetyRules,
@@ -41,10 +41,7 @@ use diem_types::{
 };
 use executor_types::StateComputeResult;
 use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     prelude::stream::FusedStream,
     StreamExt,
 };
@@ -126,7 +123,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
 
     let output_state_computer = Arc::new(OrderingStateComputer::new_with_name(
         commit_result_tx,
-        block_store_state_computer.clone(), //Arc::new(EmptyStateComputer),
+        Arc::new(EmptyStateComputer),
         execution_phase_reset_tx,
         String::from("output_state_computer"),
     ));

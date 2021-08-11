@@ -18,14 +18,12 @@ use crate::{
 };
 use std::sync::Arc;
 
-use crate::network_interface::ConsensusMsg;
-
 use consensus_types::block::block_test_utils::certificate_for_genesis;
 
 use crate::{
     experimental::{
         commit_phase::CommitChannelType,
-        execution_phase::{ResetAck, ResetEventType},
+        execution_phase::ResetEventType,
         tests::{
             mock_execution_phase::MockExecutionPhase,
             test_utils::prepare_commit_phase_with_block_store_state_computer,
@@ -35,9 +33,9 @@ use crate::{
     test_utils::{EmptyStateComputer, TreeInserter},
 };
 use consensus_types::executed_block::ExecutedBlock;
-use diem_logger::sample::SampleRate::Duration;
+
 use executor_types::StateComputeResult;
-use futures::channel::{mpsc::unbounded, oneshot};
+use futures::channel::mpsc::unbounded;
 
 #[test]
 fn decoupled_execution_integration() {
@@ -217,14 +215,14 @@ fn decoupled_execution_integration_with_mock_execution_phase() {
     // to the outside one that connects with the execution phase.
     let (
         mut commit_tx,
-        mut msg_tx,
-        commit_phase_reset_tx,
-        mut commit_result_rx,
-        mut self_loop_rx,
+        _msg_tx,
+        _commit_phase_reset_tx,
+        _commit_result_rx,
+        _self_loop_rx,
         _safety_rules_container,
         signers,
         _state_computer,
-        validator,
+        _validator,
         commit_phase,
         block_store_handle,
     ) = prepare_commit_phase_with_block_store_state_computer(&runtime, state_computer, 1);

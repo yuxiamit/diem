@@ -9,7 +9,9 @@ use crate::{
         commit_phase::{
             CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
         },
-        execution_phase::{ExecutionChannelType, ExecutionPhase, ResetAck, ResetEventType},
+        execution_phase::{
+            notify_downstream_reset, ExecutionChannelType, ExecutionPhase, ResetEventType,
+        },
         ordering_state_computer::OrderingStateComputer,
         persisting_phase::{PersistingChannelType, PersistingPhase},
     },
@@ -47,10 +49,7 @@ use diem_types::{
     epoch_state::EpochState,
     on_chain_config::{OnChainConfigPayload, ValidatorSet},
 };
-use futures::{
-    channel::{mpsc::unbounded, oneshot},
-    select, SinkExt, StreamExt,
-};
+use futures::{channel::mpsc::unbounded, select, StreamExt};
 use network::protocols::network::Event;
 use safety_rules::SafetyRulesManager;
 use std::{
@@ -330,7 +329,7 @@ impl EpochManager {
                 execution_phase_tx,
                 self.commit_state_computer.clone(),
                 execution_phase_reset_tx,
-                String::from(format!("Ordering State Computer Epoch {}", epoch)),
+                format!("Ordering State Computer Epoch {}", epoch),
             ));
 
         info!(epoch = epoch, "Create BlockStore");
@@ -434,15 +433,9 @@ impl EpochManager {
         // Release the previous Commit Phase
         self.commit_msg_tx = None;
         if let Some(reset_tx) = self.commit_phase_reset_tx.as_ref() {
-            let (tx, rx) = oneshot::channel::<ResetAck>();
-            reset_tx
-                .clone()
-                .send(ResetEventType {
-                    reset_callback: tx,
-                    reconfig: true,
-                })
-                .await;
-            rx.await;
+            if let Err(e) = notify_downstream_reset(reset_tx, true).await {
+                error!("Error in resetting commit phase {}", e.to_string());
+            }
         }
 
         // let the execution phase drop
