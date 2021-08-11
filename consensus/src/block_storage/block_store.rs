@@ -162,22 +162,6 @@ pub fn path_from_commit_root_with_block_tree(
     block_tree.read().path_from_commit_root(block_id)
 }
 
-pub fn retry_execute_from_root(
-    parent_block_id: HashValue,
-    target_block: Block,
-    block_tree: Arc<RwLock<BlockTree>>,
-    state_computer: Arc<dyn StateComputer>,
-) -> anyhow::Result<ExecutedBlock, Error> {
-    // recover the block tree in executor
-    let blocks_to_reexecute =
-        path_from_commit_root_with_block_tree(parent_block_id, block_tree).unwrap_or_else(Vec::new);
-
-    for block in blocks_to_reexecute {
-        execute_block_with_state_computer(block.block().clone(), &state_computer)?;
-    }
-    execute_block_with_state_computer(target_block, &state_computer)
-}
-
 impl BlockStore {
     pub fn new(
         storage: Arc<dyn PersistentLivenessStorage>,
@@ -207,11 +191,10 @@ impl BlockStore {
         // reproduce the same batches (important for the commit phase)
 
         let mut certs = self.inner.read().get_all_quorum_certs_with_commit_info();
-        certs
-            .sort_unstable_by(|qc1, qc2| qc1.commit_info().round().cmp(&qc2.commit_info().round()));
+        certs.sort_unstable_by_key(|qc| qc.commit_info().round());
 
         for qc in certs {
-            if qc.vote_data().parent().id() != qc.vote_data().proposed().id() {
+            if qc.commit_info().round() > self.commit_root().round() {
                 info!(
                     "trying to commit to round {} with ledger info {}",
                     qc.commit_info().round(),
@@ -268,6 +251,15 @@ impl BlockStore {
             "root qc state id {} doesn't match committed trees {}",
             root_qc.certified_block().executed_state_id(),
             root_metadata.accu_hash,
+        );
+
+        debug!(
+            "Blocks used to construct block_store: {}",
+            blocks
+                .iter()
+                .map(|b| format!("\n\t{}", b))
+                .collect::<Vec<String>>()
+                .concat()
         );
 
         let result = StateComputeResult::new(
@@ -352,7 +344,7 @@ impl BlockStore {
         let block_tree_in_commit_callback = self.inner.clone();
         let block_tree_in_execution_failure_callback = self.inner.clone();
         let storage = self.storage.clone();
-        let commit_root_in_commit_callback = self.commit_root().clone();
+        let commit_root_in_commit_callback = self.commit_root();
         // asynchronously execute and commit
         self.state_computer
             .commit(
@@ -376,8 +368,13 @@ impl BlockStore {
                 Some(Box::new(move |finality_proof| {
                     let block_tree_handle = block_tree_in_execution_failure_callback.clone();
                     let commit_root = block_tree_handle.read().commit_root();
-                    debug!("refetching blocks starting from round {} to {}", commit_root.round(), finality_proof.commit_info().round());
-                    let res = block_tree_handle.read()
+                    debug!(
+                        "refetching blocks starting from round {} to {}",
+                        commit_root.round(),
+                        finality_proof.commit_info().round()
+                    );
+                    let res = block_tree_handle
+                        .read()
                         .path_from_root_to_block(
                             finality_proof.ledger_info().consensus_block_id(),
                             commit_root.id(),
@@ -385,7 +382,7 @@ impl BlockStore {
                         )
                         .unwrap_or_else(Vec::new)
                         .iter()
-                        .map(|eb|eb.block().clone())
+                        .map(|eb| eb.block().clone())
                         .collect();
                     res
                 })),

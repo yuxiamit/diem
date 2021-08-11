@@ -9,8 +9,11 @@ use crate::{
         commit_phase::{
             CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
         },
-        execution_phase::{ExecutionChannelType, ExecutionPhase},
+        execution_phase::{
+            notify_downstream_reset, ExecutionChannelType, ExecutionPhase, ResetEventType,
+        },
         ordering_state_computer::OrderingStateComputer,
+        persisting_phase::{PersistingChannelType, PersistingPhase},
     },
     liveness::{
         leader_reputation::{ActiveInactiveHeuristic, DiemDBBackend, LeaderReputation},
@@ -30,7 +33,7 @@ use crate::{
     util::time_service::TimeService,
 };
 use anyhow::{anyhow, bail, ensure, Context};
-use channel::{diem_channel, message_queues::QueueStyle};
+use channel::{diem_channel, message_queues::QueueStyle, Sender};
 use consensus_types::{
     common::{Author, Round},
     epoch_retrieval::EpochRetrievalRequest,
@@ -46,18 +49,15 @@ use diem_types::{
     epoch_state::EpochState,
     on_chain_config::{OnChainConfigPayload, ValidatorSet},
 };
-use futures::{
-    channel::{mpsc::unbounded, oneshot},
-    select, SinkExt, StreamExt,
-};
+use futures::{channel::mpsc::unbounded, select, StreamExt};
 use network::protocols::network::Event;
 use safety_rules::SafetyRulesManager;
 use std::{
     cmp::Ordering,
     sync::{atomic::AtomicU64, Arc},
+    thread::sleep,
     time::Duration,
 };
-use crate::experimental::execution_phase::ResetEventType;
 //use diem_types::on_chain_config::OnChainConsensusConfig;
 
 /// RecoveryManager is used to process events in order to sync up with peer if we can't recover from local consensusdb
@@ -100,6 +100,7 @@ pub struct EpochManager {
     processor: Option<RoundProcessor>,
     reconfig_events: diem_channel::Receiver<(), OnChainConfigPayload>,
     commit_msg_tx: Option<diem_channel::Sender<CommitPhaseMessageKey, VerifiedEvent>>,
+    commit_phase_reset_tx: Option<Sender<ResetEventType>>,
     back_pressure: Arc<AtomicU64>,
 }
 
@@ -137,6 +138,7 @@ impl EpochManager {
             processor: None,
             reconfig_events,
             commit_msg_tx: None,
+            commit_phase_reset_tx: None,
             back_pressure,
         }
     }
@@ -309,26 +311,26 @@ impl EpochManager {
         proposer_election: Box<dyn ProposerElection + Send + Sync>,
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         network_sender: NetworkSender,
-    ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase)> {
+    ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase, PersistingPhase)> {
         let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
-        let (execution_phase_reset_tx, execution_phase_reset_rx) =
-            channel::new::<ResetEventType>(
-                1,
-                &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL,
-            );
+        let (execution_phase_reset_tx, execution_phase_reset_rx) = channel::new::<ResetEventType>(
+            1,
+            &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL,
+        );
 
-        let (commit_phase_reset_tx, commit_phase_reset_rx) =
-            channel::new::<ResetEventType>(
-                1,
-                &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL,
-            );
+        let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new::<ResetEventType>(
+            1,
+            &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL,
+        );
 
-        let state_computer: Arc<dyn StateComputer> = Arc::new(OrderingStateComputer::new(
-            execution_phase_tx,
-            self.commit_state_computer.clone(),
-            execution_phase_reset_tx,
-        ));
+        let state_computer: Arc<dyn StateComputer> =
+            Arc::new(OrderingStateComputer::new_with_name(
+                execution_phase_tx,
+                self.commit_state_computer.clone(),
+                execution_phase_reset_tx,
+                format!("Ordering State Computer Epoch {}", epoch),
+            ));
 
         info!(epoch = epoch, "Create BlockStore");
         let block_store = Arc::new(BlockStore::new(
@@ -350,8 +352,9 @@ impl EpochManager {
             self.config.max_block_size,
         );
 
-        let (commit_phase_tx, commit_phase_rx) =
-            unbounded::<CommitChannelType>();
+        let (commit_phase_tx, commit_phase_rx) = unbounded::<CommitChannelType>();
+
+        self.commit_phase_reset_tx = Some(commit_phase_reset_tx.clone());
 
         let execution_phase = ExecutionPhase::new(
             execution_phase_rx,
@@ -373,7 +376,14 @@ impl EpochManager {
         self.back_pressure
             .store(0, std::sync::atomic::Ordering::SeqCst);
 
-        let commit_phase = CommitPhase::new(
+        let (persist_phase_tx, persist_phase_rx) = unbounded::<PersistingChannelType>();
+
+        let (persist_phase_reset_tx, persist_phase_reset_rx) = channel::new::<ResetEventType>(
+            1,
+            &counters::DECOUPLED_EXECUTION__PERSISTING_PHASE_RESET_CHANNEL,
+        );
+
+        let commit_phase = CommitPhase::new_with_persisting_phase(
             commit_phase_rx,
             self.commit_state_computer.clone(),
             commit_msg_rx,
@@ -383,6 +393,15 @@ impl EpochManager {
             self.back_pressure.clone(),
             network_sender.clone(),
             commit_phase_reset_rx,
+            Some(persist_phase_tx),
+            Some(persist_phase_reset_tx),
+        );
+
+        let persisting_phase = PersistingPhase::new(
+            persist_phase_rx,
+            persist_phase_reset_rx,
+            self.commit_state_computer.clone(),
+            self.back_pressure.clone(),
         );
 
         let round_manager = RoundManager::new_with_decoupled_execution(
@@ -400,7 +419,12 @@ impl EpochManager {
             self.config.back_pressure_limit,
         );
 
-        Ok((round_manager, execution_phase, commit_phase))
+        Ok((
+            round_manager,
+            execution_phase,
+            commit_phase,
+            persisting_phase,
+        ))
     }
 
     async fn start_round_manager(&mut self, recovery_data: RecoveryData, epoch_state: EpochState) {
@@ -408,6 +432,14 @@ impl EpochManager {
         self.processor = None;
         // Release the previous Commit Phase
         self.commit_msg_tx = None;
+        if let Some(reset_tx) = self.commit_phase_reset_tx.as_ref() {
+            if let Err(e) = notify_downstream_reset(reset_tx, true).await {
+                error!("Error in resetting commit phase {}", e.to_string());
+            }
+        }
+
+        // let the execution phase drop
+        sleep(Duration::from_millis(200));
         let epoch = epoch_state.epoch;
         counters::EPOCH.set(epoch_state.epoch as i64);
         counters::CURRENT_EPOCH_VALIDATORS.set(epoch_state.verifier.len() as i64);
@@ -448,14 +480,14 @@ impl EpochManager {
 
         let mut processor = if self.config.decoupled_execution {
             info!(epoch = epoch, "starting decoupled execution");
-            let (round_manager, execution_phase, commit_phase) = self
+            let (round_manager, execution_phase, commit_phase, persisting_phase) = self
                 .prepare_decoupled_execution(
                     epoch,
                     recovery_data,
                     epoch_state,
                     round_state,
                     proposer_election,
-                    safety_rules_container.clone(),
+                    safety_rules_container,
                     network_sender,
                 )
                 .unwrap();
@@ -464,6 +496,7 @@ impl EpochManager {
 
             tokio::spawn(execution_phase.start());
             tokio::spawn(commit_phase.start());
+            tokio::spawn(persisting_phase.start());
 
             round_manager
         } else {

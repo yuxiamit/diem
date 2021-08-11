@@ -336,3 +336,13 @@ pub static DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL: Lazy<IntGauge> = 
     )
     .unwrap()
 });
+
+/// Counter for the decoupling execution channel of persisting phase reset events
+/// from commit phase to persisting phase when a reset event occurs
+pub static DECOUPLED_EXECUTION__PERSISTING_PHASE_RESET_CHANNEL: Lazy<IntGauge> = Lazy::new(|| {
+    register_int_gauge!(
+        "diem_decoupled_execution__persisting_phase_reset_channel",
+        "Number of pending persisting phase reset events"
+    )
+    .unwrap()
+});

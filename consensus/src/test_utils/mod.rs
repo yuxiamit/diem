@@ -20,6 +20,8 @@ mod mock_storage;
 mod mock_txn_manager;
 
 use crate::util::mock_time_service::SimulatedTimeService;
+#[cfg(test)]
+use consensus_types::sync_info::SyncInfo;
 use consensus_types::{block::block_test_utils::gen_test_certificate, common::Payload};
 use diem_types::block_info::BlockInfo;
 pub use mock_state_computer::{
@@ -27,7 +29,6 @@ pub use mock_state_computer::{
 };
 pub use mock_storage::{EmptyStorage, MockSharedStorage, MockStorage};
 pub use mock_txn_manager::MockTransactionManager;
-use consensus_types::sync_info::SyncInfo;
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 

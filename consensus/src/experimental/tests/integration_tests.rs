@@ -18,22 +18,24 @@ use crate::{
 };
 use std::sync::Arc;
 
-use crate::network_interface::ConsensusMsg;
-
 use consensus_types::block::block_test_utils::certificate_for_genesis;
 
 use crate::{
     experimental::{
-        commit_phase::CommitChannelType, execution_phase::ResetAck,
-        tests::test_utils::prepare_commit_phase_with_block_store_state_computer,
+        commit_phase::CommitChannelType,
+        execution_phase::ResetEventType,
+        tests::{
+            mock_execution_phase::MockExecutionPhase,
+            test_utils::prepare_commit_phase_with_block_store_state_computer,
+        },
     },
     state_replication::empty_state_computer_call_back,
     test_utils::{EmptyStateComputer, TreeInserter},
 };
 use consensus_types::executed_block::ExecutedBlock;
+
 use executor_types::StateComputeResult;
-use futures::channel::{mpsc::unbounded, oneshot};
-use crate::experimental::execution_phase::ResetEventType;
+use futures::channel::mpsc::unbounded;
 
 #[test]
 fn decoupled_execution_integration() {
@@ -44,11 +46,14 @@ fn decoupled_execution_integration() {
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<ResetEventType>(1);
 
-    let state_computer = Arc::new(OrderingStateComputer::new(
+    let state_computer = Arc::new(OrderingStateComputer::new_with_name(
         execution_phase_tx,
-        Arc::new(EmptyStateComputer {}), // we will not call sync_to in this test
+        Arc::new(EmptyStateComputer), // we will not call sync_to in this test
         execution_phase_reset_tx,
+        String::from("Block Store Ordering State Computer"),
     ));
+
+    let state_computer_handle = state_computer.clone();
 
     // now we need to replace the state computer instance (previously the one directly outputs to commit_result_rx)
     // to the outside one that connects with the execution phase.
@@ -142,12 +147,6 @@ fn decoupled_execution_integration() {
             panic!("Expecting a commited block")
         }
 
-        // and it sends a commit decision
-        assert!(matches!(
-            self_loop_rx.next().await,
-            Some(Event::Message(_, ConsensusMsg::CommitDecisionMsg(_))),
-        ));
-
         // fill in two dummy items to commit_tx to make sure commit_phase::check_commit has finished
         let (blocks_1, li_1) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
         let (blocks_2, li_2) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
@@ -174,5 +173,127 @@ fn decoupled_execution_integration() {
         assert!(!block_store_handle.block_exists(a2.block().id()));
         // ..until a3
         assert!(block_store_handle.block_exists(a3.block().id()));
+
+        drop(inserter);
+        drop(block_store_handle);
+
+        println!(
+            "Before dropping _state_computer {}",
+            Arc::strong_count(&_state_computer),
+        );
+
+        drop(_state_computer);
+
+        println!(
+            "state_computer {}",
+            Arc::strong_count(&state_computer_handle),
+        );
+
+        println!("test finished");
     });
+}
+
+#[test]
+fn decoupled_execution_integration_with_mock_execution_phase() {
+    let mut runtime = consensus_runtime();
+
+    let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
+
+    let (execution_phase_reset_tx, execution_phase_reset_rx) =
+        channel::new_test::<ResetEventType>(1);
+
+    let state_computer = Arc::new(OrderingStateComputer::new_with_name(
+        execution_phase_tx,
+        Arc::new(EmptyStateComputer), // we will not call sync_to in this test
+        execution_phase_reset_tx,
+        String::from("Block Store Ordering State Computer"),
+    ));
+
+    let state_computer_handle = state_computer.clone();
+
+    // now we need to replace the state computer instance (previously the one directly outputs to commit_result_rx)
+    // to the outside one that connects with the execution phase.
+    let (
+        mut commit_tx,
+        _msg_tx,
+        _commit_phase_reset_tx,
+        _commit_result_rx,
+        _self_loop_rx,
+        _safety_rules_container,
+        signers,
+        _state_computer,
+        _validator,
+        commit_phase,
+        block_store_handle,
+    ) = prepare_commit_phase_with_block_store_state_computer(&runtime, state_computer, 1);
+
+    let mut inserter = TreeInserter::new_with_store(signers[0].clone(), block_store_handle.clone());
+
+    let genesis = block_store_handle.ordered_root();
+    let genesis_block_id = genesis.id();
+    let genesis_block = block_store_handle
+        .get_block(genesis_block_id)
+        .expect("genesis block must exist");
+
+    // genesis --> a1 --> a2 --> a3 --> a4
+    let a1 = inserter.insert_block_with_qc(certificate_for_genesis(), &genesis_block, 1);
+    let a2 = inserter.insert_block(&a1, 2, None);
+    let a3 = inserter.insert_block(&a2, 3, Some(genesis.block_info()));
+    let a4 = inserter.insert_block(&a3, 4, Some(a3.block_info()));
+
+    let ledger_info_with_sigs = a4.quorum_cert().ledger_info().clone();
+
+    let mut random_state_computer = RandomComputeResultStateComputer::new();
+    random_state_computer.set_root_hash(a4.quorum_cert().certified_block().executed_state_id());
+
+    let execution_phase = MockExecutionPhase::new(execution_phase_rx, execution_phase_reset_rx);
+
+    runtime.spawn(execution_phase.start());
+
+    runtime.spawn(commit_phase.start());
+
+    timed_block_on(&mut runtime, async move {
+        // commit the block
+        block_store_handle.commit(ledger_info_with_sigs).await.ok();
+
+        // fill in two dummy items to commit_tx to make sure commit_phase::check_commit has finished
+        let (blocks_1, li_1) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
+        let (blocks_2, li_2) = prepare_executed_blocks_with_ordered_ledger_info(&signers[0]);
+        commit_tx
+            .send(CommitChannelType(
+                blocks_1,
+                li_1,
+                empty_state_computer_call_back(),
+            ))
+            .await
+            .ok();
+        commit_tx
+            .send(CommitChannelType(
+                blocks_2,
+                li_2,
+                empty_state_computer_call_back(),
+            ))
+            .await
+            .ok();
+
+        drop(inserter);
+        drop(block_store_handle);
+
+        println!(
+            "Before dropping _state_computer {}",
+            Arc::strong_count(&_state_computer),
+        );
+
+        drop(_state_computer);
+
+        println!(
+            "state_computer {}",
+            Arc::strong_count(&state_computer_handle),
+        );
+
+        drop(state_computer_handle);
+        println!("test finished");
+    });
+
+    //runtime.shutdown_timeout(std::time::Duration::from_secs(10));
 }

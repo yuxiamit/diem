@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::{Author, Round};
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{
-    block_info::BlockInfo, ledger_info::LedgerInfo, validator_signer::ValidatorSigner,
+    block_info::BlockInfo,
+    ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
+    validator_signer::ValidatorSigner,
     validator_verifier::ValidatorVerifier,
 };
 use serde::{Deserialize, Serialize};
 use short_hex_str::AsShortHexStr;
 use std::fmt::{Debug, Display, Formatter};
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use diem_types::validator_verifier::VerifyError;
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitVote {

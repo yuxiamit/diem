@@ -746,6 +746,23 @@ impl SubmissionWorker {
                 time::sleep(wait_util - now).await;
             }
         }
+        if !self.params.wait_committed {
+            // collect committed txn number
+            let addresses: Vec<_> = self.accounts.iter().map(|d| d.address()).collect();
+            match query_sequence_numbers(&self.client, &addresses).await {
+                Err(e) => {
+                    info!(
+                        "Failed to query ledger info on accounts {:?} for instance {:?} : {:?}",
+                        addresses, self.client, e
+                    );
+                }
+                Ok(sequence_numbers) => {
+                    self.stats
+                        .committed
+                        .fetch_add(sequence_numbers.iter().sum(), Ordering::SeqCst);
+                }
+            }
+        }
         self.accounts
     }
 

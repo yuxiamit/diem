@@ -17,14 +17,11 @@ use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use std::{boxed::Box, sync::Arc};
 
 use crate::{
-    experimental::{
-        errors::Error,
-        execution_phase::{ExecutionChannelType, ResetAck},
+    experimental::execution_phase::{
+        notify_downstream_reset, ExecutionChannelType, ResetEventType,
     },
     state_replication::StateComputerCommitCallBackType,
 };
-use futures::channel::oneshot;
-use crate::experimental::execution_phase::ResetEventType;
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
@@ -35,6 +32,7 @@ pub struct OrderingStateComputer {
     executor_channel: UnboundedSender<ExecutionChannelType>,
     state_computer_for_sync: Arc<dyn StateComputer>,
     reset_event_channel_tx: Sender<ResetEventType>,
+    name: String,
 }
 
 impl OrderingStateComputer {
@@ -48,13 +46,39 @@ impl OrderingStateComputer {
             executor_channel,
             state_computer_for_sync,
             reset_event_channel_tx,
+            name: String::from(""),
+        }
+    }
+
+    pub fn new_with_name(
+        executor_channel: UnboundedSender<ExecutionChannelType>,
+        state_computer_for_sync: Arc<dyn StateComputer>,
+        reset_event_channel_tx: Sender<ResetEventType>,
+        name: String,
+    ) -> Self {
+        info!("ordering state computer new");
+        Self {
+            executor_channel,
+            state_computer_for_sync,
+            reset_event_channel_tx,
+            name,
         }
     }
 }
 
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
-        info!("ordering state computer dropped");
+        info!("Start dropping");
+        /*
+        if let Err(e) = block_on(notify_downstream_reset(&self.reset_event_channel_tx, true)) {
+            error!("Error in reseting before get dropped {}", e.to_string());
+        }
+        */
+        info!(
+            "ordering state computer [{}] dropped, inner state computer ref count {}",
+            self.name,
+            Arc::strong_count(&self.state_computer_for_sync),
+        );
     }
 }
 
@@ -87,7 +111,8 @@ impl StateComputer for OrderingStateComputer {
 
         let ordered_block = blocks.iter().map(|b| b.block().clone()).collect();
 
-        if let Err(e) = self.executor_channel
+        if let Err(e) = self
+            .executor_channel
             .clone()
             .send(ExecutionChannelType(
                 ordered_block,
@@ -95,7 +120,8 @@ impl StateComputer for OrderingStateComputer {
                 executor_failure_callback,
                 callback,
             ))
-            .await {
+            .await
+        {
             // probably the execution phase is gone
             error!("Send failure {}", e.to_string());
         }
@@ -114,16 +140,19 @@ impl StateComputer for OrderingStateComputer {
         );
 
         // reset execution phase and commit phase
-        let (tx, rx) = oneshot::channel::<ResetAck>();
-        self.reset_event_channel_tx
-            .clone()
-            .send(ResetEventType{
-                reset_callback: tx,
-                reconfig: target.ledger_info().ends_epoch(),
-            })
-            .await
-            .map_err(|_| Error::ResetDropped)?;
-        rx.await.map_err(|_| Error::ResetDropped)?;
+        if let Err(e) = notify_downstream_reset(
+            &self.reset_event_channel_tx,
+            target.ledger_info().ends_epoch(),
+        )
+        .await
+        {
+            error!(
+                "Error in requesting execution phase to reset: {}",
+                e.to_string()
+            );
+        }
+
+        debug!("resetting executor");
 
         // has to after reset to avoid racing (committing the blocks after the sync)
         self.state_computer_for_sync.sync_to(target).await?;

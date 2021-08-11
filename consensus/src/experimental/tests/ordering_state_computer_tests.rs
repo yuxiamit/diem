@@ -15,7 +15,9 @@ use executor_types::StateComputeResult;
 use std::sync::Arc;
 
 use crate::{
-    experimental::execution_phase::{empty_execute_phase_callback, ExecutionChannelType, ResetAck},
+    experimental::execution_phase::{
+        empty_execute_phase_callback, ExecutionChannelType, ResetEventType,
+    },
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, EmptyStateComputer},
 };
@@ -23,15 +25,11 @@ use consensus_types::{executed_block::ExecutedBlock, quorum_cert::QuorumCert};
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{account_address::AccountAddress, validator_signer::ValidatorSigner};
 use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver},
-        oneshot,
-    },
+    channel::mpsc::{unbounded, UnboundedReceiver},
     StreamExt,
 };
 use rand::Rng;
 use std::collections::BTreeMap;
-use crate::experimental::execution_phase::ResetEventType;
 
 pub fn prepare_ordering_state_computer() -> (
     Arc<OrderingStateComputer>,

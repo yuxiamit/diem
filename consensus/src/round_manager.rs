@@ -49,7 +49,6 @@ use std::{
 };
 use termion::color::*;
 
-
 #[derive(Serialize, Clone)]
 pub enum UnverifiedEvent {
     ProposalMsg(Box<ProposalMsg>),
@@ -181,7 +180,6 @@ impl RecoveryManager {
             "[RecoveryManager] Received sync info is in different epoch than committed block"
         );
 
-
         let mut retriever = BlockRetriever::new(self.network.clone(), peer);
         let recovery_data = BlockStore::fast_forward_sync(
             sync_info.highest_ordered_cert(),
@@ -190,10 +188,9 @@ impl RecoveryManager {
             self.storage.clone(),
             self.state_computer.clone(),
         )
-            .await?;
+        .await?;
 
         Ok(recovery_data)
-
     }
 
     pub fn epoch_state(&self) -> &EpochState {
@@ -220,6 +217,15 @@ pub struct RoundManager {
     back_pressure: Arc<AtomicU64>,
     decoupled_execution: bool,
     back_pressure_limit: u64,
+}
+
+impl Drop for RoundManager {
+    fn drop(&mut self) {
+        info!(
+            "round manager dropped, safety_rules ref count {}",
+            Arc::strong_count(&self.safety_rules)
+        );
+    }
 }
 
 impl RoundManager {
@@ -406,7 +412,7 @@ impl RoundManager {
     ) -> anyhow::Result<()> {
         let local_sync_info = self.block_store.sync_info();
         // debug!("called local_sync_info with {}, local {}, from {}", sync_info, local_sync_info, author);
-        if help_remote && local_sync_info.has_newer_certificates(&sync_info) {
+        if help_remote && local_sync_info.has_newer_certificates(sync_info) {
             counters::SYNC_INFO_MSGS_SENT_COUNT.inc();
             debug!(
                 self.new_log(LogEvent::HelpPeerSync).remote_peer(author),
@@ -435,7 +441,11 @@ impl RoundManager {
             // debug!("Sync Info passed verification");
             let result = self
                 .block_store
-                .add_certs(sync_info, self.create_block_retriever(author), self.sync_only())
+                .add_certs(
+                    sync_info,
+                    self.create_block_retriever(author),
+                    self.sync_only(),
+                )
                 .await;
             self.process_certificates().await?;
             result

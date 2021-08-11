@@ -31,7 +31,6 @@ use mirai_annotations::checked_precondition;
 use rand::{prelude::*, Rng};
 use std::{clone::Clone, cmp::min, sync::Arc, time::Duration};
 
-
 #[derive(Debug, PartialEq)]
 /// Whether we need to do block retrieval if we want to insert a Quorum Cert.
 pub enum NeedFetchResult {
@@ -63,13 +62,14 @@ impl BlockStore {
 
         // if sync to this node really helps and ..
         self.commit_root().round() < li.commit_info().round()
-
             && (
-            // we are in sync only mode, or...
-            (sync_only &&
+                // the sync mode is set artificially
+                (sync_only && self.commit_root().round() + DEFAULT_BACK_PRESSURE_LIMIT > self.ordered_root().round())
+                ||
             // we are far behind that no chance of revive through
                 // commit phase (no commit vote/decision will be received), or ..
-                self.commit_root().round() + DEFAULT_COMMIT_DECISION_GRACE_PERIOD as u64 <= li.commit_info().round()) ||
+                self.commit_root().round() + DEFAULT_COMMIT_DECISION_GRACE_PERIOD as u64 <= li.commit_info().round()
+             ||
             // we do not have the block locally
             !self.block_exists(qc.commit_info().id())
             )
@@ -107,7 +107,6 @@ impl BlockStore {
         mut retriever: BlockRetriever,
         sync_only: bool,
     ) -> anyhow::Result<()> {
-
         self.sync_to_highest_ordered_cert(
             sync_info.highest_ordered_cert().clone(),
             sync_info.highest_ledger_info().clone(),
@@ -249,7 +248,8 @@ impl BlockStore {
     ) -> anyhow::Result<RecoveryData> {
         // we fetch the blocks from
         let num_blocks = highest_ordered_cert.certified_block().round()
-            - highest_ledger_info.ledger_info().round() + 1;
+            - highest_ledger_info.ledger_info().round()
+            + 1;
 
         debug!(
             LogSchema::new(LogEvent::StateSync).remote_peer(retriever.preferred_peer),
@@ -288,7 +288,7 @@ impl BlockStore {
 
         if blocks
             .iter()
-            .position(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id()).is_some()
+            .any(|b| b.id() == highest_ledger_info.ledger_info().commit_info().id())
         {
             //blocks = blocks[..end_idx + 1].to_vec(); // trim
 
@@ -394,7 +394,9 @@ impl BlockRetriever {
                 )
                 .await;
             match response.and_then(|result| {
-                if result.status() == BlockRetrievalStatus::Succeeded || result.status() == BlockRetrievalStatus::NotEnoughBlocks {
+                if result.status() == BlockRetrievalStatus::Succeeded
+                    || result.status() == BlockRetrievalStatus::NotEnoughBlocks
+                {
                     Ok(result.blocks().clone())
                 } else {
                     Err(format_err!("{:?}", result.status()))
