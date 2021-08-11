@@ -8,18 +8,19 @@ use crate::{
 use channel::{Receiver, Sender};
 use consensus_types::{block::Block, executed_block::ExecutedBlock};
 
+use core::hint;
 use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
 use futures::{
-    channel::{mpsc::UnboundedReceiver, mpsc::UnboundedSender, oneshot},
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    prelude::stream::FusedStream,
     select, FutureExt, SinkExt, StreamExt,
 };
-use std::sync::Arc;
-use futures::prelude::stream::FusedStream;
-use std::thread::sleep;
-use std::time::Duration;
-use core::hint;
+use std::{sync::Arc, thread::sleep, time::Duration};
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from
@@ -36,18 +37,25 @@ pub struct ResetEventType {
     pub reconfig: bool,
 }
 
-pub async fn notify_downstream_reset(reset_tx: &Sender<ResetEventType>, reconfig: bool) -> anyhow::Result<()> {
+pub async fn notify_downstream_reset(
+    reset_tx: &Sender<ResetEventType>,
+    reconfig: bool,
+) -> anyhow::Result<()> {
     // notify the commit phase
     let (tx, rx) = oneshot::channel::<ResetAck>();
-    reset_tx.clone().send(ResetEventType{
-        reset_callback: tx,
-        reconfig: reconfig,
-    }).await?;
+    reset_tx
+        .clone()
+        .send(ResetEventType {
+            reset_callback: tx,
+            reconfig,
+        })
+        .await?;
     rx.await?;
     Ok(())
 }
 
-pub type ExecutionPhaseCallBackType = Option<Box<dyn Fn(LedgerInfoWithSignatures) -> Vec<Block> + Send + Sync>>;
+pub type ExecutionPhaseCallBackType =
+    Option<Box<dyn Fn(LedgerInfoWithSignatures) -> Vec<Block> + Send + Sync>>;
 
 #[cfg(test)]
 pub fn empty_execute_phase_callback() -> ExecutionPhaseCallBackType {
@@ -69,7 +77,7 @@ pub struct ExecutionPendingBlocks {
 impl ExecutionPendingBlocks {
     pub fn update_blocks(&mut self, blocks: Vec<Block>) {
         let pending_channel_type = self.pending_channel_type.take().unwrap();
-        self.pending_channel_type = Some(ExecutionChannelType (
+        self.pending_channel_type = Some(ExecutionChannelType(
             blocks,
             pending_channel_type.1,
             pending_channel_type.2,
@@ -77,8 +85,12 @@ impl ExecutionPendingBlocks {
         ))
     }
 
-    pub fn vecblocks(&self) -> Vec<Block> { self.pending_channel_type.as_ref().unwrap().0.clone() }
-    pub fn ledger_info(&self) -> LedgerInfoWithSignatures { self.pending_channel_type.as_ref().unwrap().1.clone() }
+    pub fn vecblocks(&self) -> Vec<Block> {
+        self.pending_channel_type.as_ref().unwrap().0.clone()
+    }
+    pub fn ledger_info(&self) -> LedgerInfoWithSignatures {
+        self.pending_channel_type.as_ref().unwrap().1.clone()
+    }
     pub fn execution_failure_callback(&self) -> &ExecutionPhaseCallBackType {
         &self.pending_channel_type.as_ref().unwrap().2
     }
@@ -136,20 +148,26 @@ impl ExecutionPhase {
         }
     }
 
-    pub async fn process_reset_event(
-        &mut self,
-        reset_event: ResetEventType,
-    ) -> anyhow::Result<()> {
+    pub async fn process_reset_event(&mut self, reset_event: ResetEventType) -> anyhow::Result<()> {
         info!("process_reset_event");
-        let ResetEventType {reset_callback, reconfig} = reset_event;
+        let ResetEventType {
+            reset_callback,
+            reconfig,
+        } = reset_event;
         // reset the execution phase
 
         if let Err(e) = notify_downstream_reset(&self.commit_phase_reset_event_tx, reconfig).await {
-            error!("Error in requesting commit phase to reset: {}", e.to_string());
+            error!(
+                "Error in requesting commit phase to reset: {}",
+                e.to_string()
+            );
         }
 
         // exhaust the executor channel
-        while self.executor_channel_rx.next().now_or_never().is_some() {
+        while !self.executor_channel_rx.is_terminated()
+            && !self.reset_event_channel_rx.is_terminated()
+            && self.executor_channel_rx.next().now_or_never().is_some()
+        {
             hint::spin_loop();
         }
 
@@ -187,7 +205,10 @@ impl ExecutionPhase {
             match execution_result {
                 Ok(executed_blocks) => {
                     // assert this is consistent with our batch
-                    assert_eq!(executed_blocks.last().unwrap().id(), pd.original_blocks.last().unwrap().id());
+                    assert_eq!(
+                        executed_blocks.last().unwrap().id(),
+                        pd.original_blocks.last().unwrap().id()
+                    );
                     assert!(executed_blocks.len() >= vecblock.len());
                     let starting_idx = executed_blocks.len() - pd.original_blocks.len();
                     assert_eq!(
@@ -201,8 +222,13 @@ impl ExecutionPhase {
                         .send(CommitChannelType(
                             executed_blocks[starting_idx..].to_vec(),
                             pending_ledger_info.clone(),
-                            self.pending_blocks.
-                                    take().unwrap().pending_channel_type.take().unwrap().3
+                            self.pending_blocks
+                                .take()
+                                .unwrap()
+                                .pending_channel_type
+                                .take()
+                                .unwrap()
+                                .3,
                         ))
                         .await
                         .map_err(|e| ExecutionError::InternalError {
@@ -221,15 +247,17 @@ impl ExecutionPhase {
                         self.in_epoch = false;
                     }
                     */
-
                 }
                 Err(ExecutionError::BlockNotFound(_)) => {
                     // there must be a callback
-                    let refetched_block = pd
-                        .execution_failure_callback().as_ref().unwrap()
-                        (pending_ledger_info.clone());
+                    let refetched_block = pd.execution_failure_callback().as_ref().unwrap()(
+                        pending_ledger_info.clone(),
+                    );
 
-                    self.pending_blocks.as_mut().unwrap().update_blocks(refetched_block);
+                    self.pending_blocks
+                        .as_mut()
+                        .unwrap()
+                        .update_blocks(refetched_block);
                 }
                 Err(e) => {
                     // retry locally
@@ -267,11 +295,11 @@ impl ExecutionPhase {
                 //    sleep(Duration::from_secs(2));
                 //    tx.send(1);
                 //});
-                tokio::select! {
-                    Some(executor_channel_msg) = self.executor_channel_rx.next() => {
+                select! {
+                    executor_channel_msg = self.executor_channel_rx.select_next_some() => {
                         self.process_ordered_blocks(executor_channel_msg).await;
                     }
-                    Some(reset_event_callback) = self.reset_event_channel_rx.next() => {
+                    reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
                         self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
                         })
@@ -280,24 +308,22 @@ impl ExecutionPhase {
                     //_ = rx => {
                     //    info!("timer picked up");
                     //}
-                    else => break,
+                    complete => break,
                 };
                 debug!("got message");
-            }
-            else {
+            } else {
                 debug!("pending blocks is some");
                 self.try_execute_blocks().await;
                 if self.pending_blocks.is_none() {
                     continue;
                 }
-                if let Some(Some(reset_event_callback)) = self.reset_event_channel_rx.next().now_or_never() {
-                    self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
-                        error: e.to_string(),
-                    })
-                        .unwrap();
-                }
-                if self.executor_channel_rx.is_terminated() || self.reset_event_channel_rx.is_terminated() {
-                    break
+                select! {
+                    reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
+                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
+                            error: e.to_string(),
+                        }).unwrap();
+                    }
+                    default => { continue }
                 }
             }
         }

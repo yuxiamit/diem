@@ -601,7 +601,7 @@ impl DiemSwarm {
         if check_connectivity {
             self.wait_for_connectivity(expected_peers)?;
         }
-        println!("{} Successfully launched Swarm", self.log_header());
+        info!("{} Successfully launched Swarm", self.log_header());
         Ok(())
     }
 
@@ -609,7 +609,7 @@ impl DiemSwarm {
         let num_attempts = 60;
 
         for i in 0..num_attempts {
-            println!("{} Wait for connectivity attempt: {}", self.log_header(), i);
+            info!("{} Wait for connectivity attempt: {}", self.log_header(), i);
 
             if self
                 .nodes
@@ -714,7 +714,8 @@ impl DiemSwarm {
 
         // Now wait for all the nodes to catch up to the max.
         for i in 0..num_attempts {
-            info!( // we want to show the timestamp
+            info!(
+                // we want to show the timestamp
                 "{} Wait for catchup, target_commit_round = {}, attempt: {} of {}",
                 log_header,
                 last_committed_round,

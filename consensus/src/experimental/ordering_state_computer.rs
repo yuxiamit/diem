@@ -19,13 +19,13 @@ use std::{boxed::Box, sync::Arc};
 use crate::{
     experimental::{
         errors::Error,
-        execution_phase::{ExecutionChannelType, ResetAck},
+        execution_phase::{
+            notify_downstream_reset, ExecutionChannelType, ResetAck, ResetEventType,
+        },
     },
     state_replication::StateComputerCommitCallBackType,
 };
-use futures::channel::oneshot;
-use crate::experimental::execution_phase::{ResetEventType, notify_downstream_reset};
-use futures::executor::block_on;
+use futures::{channel::oneshot, executor::block_on};
 
 /// Ordering-only execution proxy
 /// implements StateComputer traits.
@@ -73,9 +73,11 @@ impl OrderingStateComputer {
 impl Drop for OrderingStateComputer {
     fn drop(&mut self) {
         info!("Start dropping");
+        /*
         if let Err(e) = block_on(notify_downstream_reset(&self.reset_event_channel_tx, true)) {
             error!("Error in reseting before get dropped {}", e.to_string());
         }
+        */
         info!(
             "ordering state computer [{}] dropped, inner state computer ref count {}",
             self.name,
@@ -113,7 +115,8 @@ impl StateComputer for OrderingStateComputer {
 
         let ordered_block = blocks.iter().map(|b| b.block().clone()).collect();
 
-        if let Err(e) = self.executor_channel
+        if let Err(e) = self
+            .executor_channel
             .clone()
             .send(ExecutionChannelType(
                 ordered_block,
@@ -121,7 +124,8 @@ impl StateComputer for OrderingStateComputer {
                 executor_failure_callback,
                 callback,
             ))
-            .await {
+            .await
+        {
             // probably the execution phase is gone
             error!("Send failure {}", e.to_string());
         }
@@ -140,8 +144,16 @@ impl StateComputer for OrderingStateComputer {
         );
 
         // reset execution phase and commit phase
-        if let Err(e) = notify_downstream_reset(&self.reset_event_channel_tx, target.ledger_info().ends_epoch()).await {
-            error!("Error in requesting execution phase to reset: {}", e.to_string());
+        if let Err(e) = notify_downstream_reset(
+            &self.reset_event_channel_tx,
+            target.ledger_info().ends_epoch(),
+        )
+        .await
+        {
+            error!(
+                "Error in requesting execution phase to reset: {}",
+                e.to_string()
+            );
         }
 
         debug!("resetting executor");

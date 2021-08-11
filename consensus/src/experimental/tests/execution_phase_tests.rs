@@ -12,30 +12,31 @@ use crate::{
         commit_phase::CommitChannelType,
         execution_phase::{
             empty_execute_phase_callback, reset_ack_new, ExecutionChannelType, ResetAck,
+            ResetEventType,
         },
+        ordering_state_computer::OrderingStateComputer,
     },
-    state_replication::empty_state_computer_call_back,
-    test_utils::{consensus_runtime, timed_block_on, RandomComputeResultStateComputer},
+    state_replication::{empty_state_computer_call_back, StateComputer},
+    test_utils::{
+        consensus_runtime, timed_block_on, EmptyStateComputer, RandomComputeResultStateComputer,
+    },
 };
 use channel::{Receiver, Sender};
-use consensus_types::block::block_test_utils::certificate_for_genesis;
+use consensus_types::{
+    block::block_test_utils::certificate_for_genesis, executed_block::ExecutedBlock,
+};
 use diem_crypto::{ed25519::Ed25519Signature, hash::ACCUMULATOR_PLACEHOLDER_HASH, HashValue};
 use diem_types::{account_address::AccountAddress, validator_verifier::random_validator_verifier};
 use executor_types::StateComputeResult;
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedSender, UnboundedReceiver},
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     SinkExt, StreamExt,
 };
 use std::{collections::BTreeMap, sync::Arc};
-use crate::experimental::execution_phase::ResetEventType;
-use crate::experimental::ordering_state_computer::OrderingStateComputer;
-use crate::test_utils::EmptyStateComputer;
 use tokio::time::{sleep, Duration};
-use crate::state_replication::StateComputer;
-use consensus_types::executed_block::ExecutedBlock;
 
 const EXECUTION_PHASE_TEST_CHANNEL_SIZE: usize = 30;
 
@@ -52,8 +53,7 @@ fn prepare_execution_phase() -> (
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
         channel::new_test::<ResetEventType>(1);
 
-    let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<ResetEventType>(1);
+    let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new_test::<ResetEventType>(1);
 
     let (commit_phase_tx, commit_phase_rx) = unbounded::<CommitChannelType>();
 
@@ -137,7 +137,6 @@ fn test_execution_phase_e2e() {
     });
 }
 
-
 #[test]
 fn test_execution_phase_drop() {
     let num_nodes = 1;
@@ -184,17 +183,22 @@ fn test_execution_phase_drop() {
         StateComputeResult::new_dummy(),
     ))];
 
-    timed_block_on(&mut runtime,async move {
-
-        ordering_state_computer.commit(
-            &blocks,
-            li_sig.clone(),
-            empty_state_computer_call_back(),
-            empty_execute_phase_callback(),
-        ).await.unwrap();
+    timed_block_on(&mut runtime, async move {
+        ordering_state_computer
+            .commit(
+                &blocks,
+                li_sig.clone(),
+                empty_state_computer_call_back(),
+                empty_execute_phase_callback(),
+            )
+            .await
+            .unwrap();
 
         tokio::spawn(async move {
-            let ResetEventType { reset_callback: tx2, reconfig: _} = commit_phase_reset_rx.next().await.unwrap();
+            let ResetEventType {
+                reset_callback: tx2,
+                reconfig: _,
+            } = commit_phase_reset_rx.next().await.unwrap();
             tx2.send(reset_ack_new()).ok();
         });
 
@@ -205,7 +209,6 @@ fn test_execution_phase_drop() {
         join_handle.await.unwrap();
     });
 }
-
 
 #[test]
 fn test_execution_phase_reset() {
@@ -260,14 +263,20 @@ fn test_execution_phase_reset() {
         let (tx, rx) = oneshot::channel::<ResetAck>();
 
         tokio::spawn(async move {
-            let ResetEventType { reset_callback: tx2, reconfig: _} = commit_phase_reset_rx.next().await.unwrap();
+            let ResetEventType {
+                reset_callback: tx2,
+                reconfig: _,
+            } = commit_phase_reset_rx.next().await.unwrap();
             tx2.send(reset_ack_new()).ok();
         });
 
-        execution_phase.process_reset_event(ResetEventType{
-            reset_callback: tx,
-            reconfig: false,
-        }).await.ok();
+        execution_phase
+            .process_reset_event(ResetEventType {
+                reset_callback: tx,
+                reconfig: false,
+            })
+            .await
+            .ok();
 
         rx.await.ok();
 

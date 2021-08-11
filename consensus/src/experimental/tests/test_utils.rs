@@ -7,7 +7,7 @@ use crate::{
         commit_phase::{
             CommitChannelType, CommitPhase, CommitPhaseMessageKey, CommitPhaseMessageType,
         },
-        execution_phase::{ExecutionChannelType, ResetAck},
+        execution_phase::{ExecutionChannelType, ResetAck, ResetEventType},
         ordering_state_computer::OrderingStateComputer,
     },
     metrics_safety_rules::MetricsSafetyRules,
@@ -15,7 +15,7 @@ use crate::{
     network_interface::{ConsensusMsg, ConsensusNetworkSender},
     round_manager::VerifiedEvent,
     state_replication::StateComputer,
-    test_utils::MockStorage,
+    test_utils::{EmptyStateComputer, MockStorage},
     util::time_service::ClockTimeService,
 };
 use channel::{diem_channel, message_queues::QueueStyle, Receiver, Sender};
@@ -55,12 +55,10 @@ use network::{
 use safety_rules::{PersistentSafetyStorage, SafetyRulesManager};
 use std::{
     collections::BTreeMap,
+    hint::spin_loop,
     sync::{atomic::AtomicU64, Arc},
 };
 use tokio::runtime::Runtime;
-use crate::experimental::execution_phase::ResetEventType;
-use std::hint::spin_loop;
-use crate::test_utils::EmptyStateComputer;
 
 pub fn prepare_commit_phase_with_block_store_state_computer(
     runtime: &Runtime,
@@ -157,8 +155,7 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
         None,
     );
 
-    let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<ResetEventType>(1);
+    let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new_test::<ResetEventType>(1);
 
     let commit_phase = CommitPhase::new(
         commit_rx,

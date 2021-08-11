@@ -321,5 +321,7 @@ fn execution_phase_drop_test() {
     insert_waypoint(&mut node_config, waypoint);
     save_node_config(&mut node_config, &env.validator_swarm, 0);
     env.validator_swarm.start_node(0).unwrap();
-    assert!(env.validator_swarm.wait_for_all_nodes_to_catchup_with_attempts(20));
+    assert!(env
+        .validator_swarm
+        .wait_for_all_nodes_to_catchup_with_attempts(20));
 }

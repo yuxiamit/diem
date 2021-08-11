@@ -15,7 +15,9 @@ use executor_types::StateComputeResult;
 use std::sync::Arc;
 
 use crate::{
-    experimental::execution_phase::{empty_execute_phase_callback, ExecutionChannelType, ResetAck},
+    experimental::execution_phase::{
+        empty_execute_phase_callback, ExecutionChannelType, ResetAck, ResetEventType,
+    },
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, EmptyStateComputer},
 };
@@ -31,7 +33,6 @@ use futures::{
 };
 use rand::Rng;
 use std::collections::BTreeMap;
-use crate::experimental::execution_phase::ResetEventType;
 
 pub fn prepare_ordering_state_computer() -> (
     Arc<OrderingStateComputer>,

@@ -24,17 +24,20 @@ use consensus_types::block::block_test_utils::certificate_for_genesis;
 
 use crate::{
     experimental::{
-        commit_phase::CommitChannelType, execution_phase::ResetAck,
-        tests::test_utils::prepare_commit_phase_with_block_store_state_computer,
+        commit_phase::CommitChannelType,
+        execution_phase::{ResetAck, ResetEventType},
+        tests::{
+            mock_execution_phase::MockExecutionPhase,
+            test_utils::prepare_commit_phase_with_block_store_state_computer,
+        },
     },
     state_replication::empty_state_computer_call_back,
     test_utils::{EmptyStateComputer, TreeInserter},
 };
 use consensus_types::executed_block::ExecutedBlock;
+use diem_logger::sample::SampleRate::Duration;
 use executor_types::StateComputeResult;
 use futures::channel::{mpsc::unbounded, oneshot};
-use crate::experimental::execution_phase::ResetEventType;
-use crate::experimental::tests::mock_execution_phase::MockExecutionPhase;
 
 #[test]
 fn decoupled_execution_integration() {
@@ -49,7 +52,7 @@ fn decoupled_execution_integration() {
         execution_phase_tx,
         Arc::new(EmptyStateComputer), // we will not call sync_to in this test
         execution_phase_reset_tx,
-        String::from("Block Store Ordering State Computer")
+        String::from("Block Store Ordering State Computer"),
     ));
 
     let state_computer_handle = state_computer.clone();
@@ -176,17 +179,17 @@ fn decoupled_execution_integration() {
         drop(inserter);
         drop(block_store_handle);
 
-        println!("Before dropping _state_computer {}",
-                 Arc::strong_count(&_state_computer),
+        println!(
+            "Before dropping _state_computer {}",
+            Arc::strong_count(&_state_computer),
         );
 
         drop(_state_computer);
 
-        println!("state_computer {}",
-                 Arc::strong_count(&state_computer_handle),
+        println!(
+            "state_computer {}",
+            Arc::strong_count(&state_computer_handle),
         );
-
-
 
         println!("test finished");
     });
@@ -205,7 +208,7 @@ fn decoupled_execution_integration_with_mock_execution_phase() {
         execution_phase_tx,
         Arc::new(EmptyStateComputer), // we will not call sync_to in this test
         execution_phase_reset_tx,
-        String::from("Block Store Ordering State Computer")
+        String::from("Block Store Ordering State Computer"),
     ));
 
     let state_computer_handle = state_computer.clone();
@@ -245,10 +248,7 @@ fn decoupled_execution_integration_with_mock_execution_phase() {
     let mut random_state_computer = RandomComputeResultStateComputer::new();
     random_state_computer.set_root_hash(a4.quorum_cert().certified_block().executed_state_id());
 
-    let execution_phase = MockExecutionPhase::new(
-        execution_phase_rx,
-        execution_phase_reset_rx,
-    );
+    let execution_phase = MockExecutionPhase::new(execution_phase_rx, execution_phase_reset_rx);
 
     runtime.spawn(execution_phase.start());
 
@@ -281,18 +281,21 @@ fn decoupled_execution_integration_with_mock_execution_phase() {
         drop(inserter);
         drop(block_store_handle);
 
-        println!("Before dropping _state_computer {}",
-                 Arc::strong_count(&_state_computer),
+        println!(
+            "Before dropping _state_computer {}",
+            Arc::strong_count(&_state_computer),
         );
 
         drop(_state_computer);
 
-        println!("state_computer {}",
-                 Arc::strong_count(&state_computer_handle),
+        println!(
+            "state_computer {}",
+            Arc::strong_count(&state_computer_handle),
         );
 
-
-
+        drop(state_computer_handle);
         println!("test finished");
     });
+
+    //runtime.shutdown_timeout(std::time::Duration::from_secs(10));
 }

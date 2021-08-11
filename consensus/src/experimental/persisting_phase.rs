@@ -1,19 +1,25 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use diem_types::ledger_info::LedgerInfoWithSignatures;
-use crate::state_replication::{StateComputerCommitCallBackType, StateComputer};
-use futures::channel::mpsc::UnboundedReceiver;
-use consensus_types::executed_block::ExecutedBlock;
-use std::sync::Arc;
-use futures::{StreamExt, FutureExt};
-use std::sync::atomic::{AtomicU64, Ordering};
-use diem_logger::prelude::*;
+use crate::{
+    experimental::{
+        errors::Error,
+        execution_phase::{reset_ack_new, ResetEventType},
+    },
+    state_replication::{StateComputer, StateComputerCommitCallBackType},
+};
 use channel::Receiver;
-use crate::experimental::execution_phase::{ResetEventType, reset_ack_new};
-use futures::prelude::stream::FusedStream;
+use consensus_types::executed_block::ExecutedBlock;
 use core::hint;
-use crate::experimental::errors::Error;
+use diem_logger::prelude::*;
+use diem_types::ledger_info::LedgerInfoWithSignatures;
+use futures::{
+    channel::mpsc::UnboundedReceiver, prelude::stream::FusedStream, FutureExt, StreamExt,
+};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 pub struct PersistingChannelType(
     pub Vec<ExecutedBlock>,
@@ -57,22 +63,26 @@ impl PersistingPhase {
             self.in_epoch = false;
         }
 
-        self.execution_proxy.commit(
-            &blocks_to_commit,
-            ledger_info,
-            callback,
-            None,
-        ).await.expect("Failed to persist commit");
+        self.execution_proxy
+            .commit(&blocks_to_commit, ledger_info, callback, None)
+            .await
+            .expect("Failed to persist commit");
 
-        self.back_pressure.store(blocks.last().unwrap().round(), Ordering::SeqCst);
+        self.back_pressure
+            .store(blocks.last().unwrap().round(), Ordering::SeqCst);
     }
 
     pub async fn process_reset_item(&mut self, reset_item: ResetEventType) -> anyhow::Result<()> {
         info!("resetting..");
 
-        let ResetEventType { reset_callback, reconfig } = reset_item;
+        let ResetEventType {
+            reset_callback,
+            reconfig,
+        } = reset_item;
 
-        while !self.persist_channel_rx.is_terminated() && self.persist_channel_rx.next().now_or_never().is_some() {
+        while !self.persist_channel_rx.is_terminated()
+            && self.persist_channel_rx.next().now_or_never().is_some()
+        {
             hint::spin_loop();
         }
 

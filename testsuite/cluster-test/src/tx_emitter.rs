@@ -752,12 +752,14 @@ impl SubmissionWorker {
             match query_sequence_numbers(&self.client, &addresses).await {
                 Err(e) => {
                     info!(
-                    "Failed to query ledger info on accounts {:?} for instance {:?} : {:?}",
-                    addresses, self.client, e
+                        "Failed to query ledger info on accounts {:?} for instance {:?} : {:?}",
+                        addresses, self.client, e
                     );
                 }
                 Ok(sequence_numbers) => {
-                    self.stats.committed.fetch_add(sequence_numbers.iter().sum(), Ordering::SeqCst);
+                    self.stats
+                        .committed
+                        .fetch_add(sequence_numbers.iter().sum(), Ordering::SeqCst);
                 }
             }
         }

@@ -6,7 +6,7 @@ use anyhow::bail;
 use consensus_types::{
     executed_block::ExecutedBlock, quorum_cert::QuorumCert, timeout_certificate::TimeoutCertificate,
 };
-use diem_crypto::{HashValue};
+use diem_crypto::HashValue;
 use diem_logger::prelude::*;
 use diem_types::{block_info::BlockInfo, ledger_info::LedgerInfoWithSignatures};
 use mirai_annotations::{checked_verify_eq, precondition};

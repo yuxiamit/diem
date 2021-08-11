@@ -8,18 +8,24 @@ use crate::{
 use channel::{Receiver, Sender};
 use consensus_types::{block::Block, executed_block::ExecutedBlock};
 
+use crate::experimental::execution_phase::{
+    reset_ack_new, ExecutionChannelType, ExecutionPendingBlocks, ResetEventType,
+};
+use core::hint;
 use diem_logger::prelude::*;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::Error as ExecutionError;
-use futures::{channel::{mpsc::UnboundedReceiver, mpsc::UnboundedSender, oneshot}, select, FutureExt, SinkExt, StreamExt, Stream};
-use std::sync::Arc;
-use futures::prelude::stream::FusedStream;
-use std::thread::sleep;
-use std::time::Duration;
-use core::hint;
-use futures::task::Poll;
-use std::pin::Pin;
-use crate::experimental::execution_phase::{ExecutionChannelType, ResetEventType, ExecutionPendingBlocks, reset_ack_new};
+use futures::{
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    prelude::stream::FusedStream,
+    select,
+    task::Poll,
+    FutureExt, SinkExt, Stream, StreamExt,
+};
+use std::{pin::Pin, sync::Arc, thread::sleep, time::Duration};
 
 /// [ This class is used when consensus.decoupled = true ]
 /// ExecutionPhase is a singleton that receives ordered blocks from
@@ -58,10 +64,7 @@ impl MockExecutionPhase {
         }
     }
 
-    pub async fn process_reset_event(
-        &mut self,
-        reset_event: ResetEventType,
-    ) -> anyhow::Result<()> {
+    pub async fn process_reset_event(&mut self, reset_event: ResetEventType) -> anyhow::Result<()> {
         info!("process_reset_event");
 
         let ResetEventType {
@@ -98,17 +101,17 @@ impl MockExecutionPhase {
                     complete => break,
                 };
                 debug!("got message");
-            }
-            else {
+            } else {
                 debug!("pending blocks is some");
-                select! {
-                    reset_event_callback = self.reset_event_channel_rx.select_next_some() => {
-                        self.process_reset_event(reset_event_callback).await.map_err(|e| ExecutionError::InternalError {
+                if let Some(Some(reset_event_callback)) =
+                    self.reset_event_channel_rx.next().now_or_never()
+                {
+                    self.process_reset_event(reset_event_callback)
+                        .await
+                        .map_err(|e| ExecutionError::InternalError {
                             error: e.to_string(),
                         })
-                            .unwrap();
-                    }
-                    default => { continue }
+                        .unwrap();
                 }
             }
         }

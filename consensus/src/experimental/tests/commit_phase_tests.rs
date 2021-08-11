@@ -46,16 +46,18 @@ use crate::{
 
 use crate::experimental::{
     commit_phase::CommitPhaseMessageKey,
-    execution_phase::ResetAck,
+    execution_phase::{ResetAck, ResetEventType},
     tests::test_utils::{
         prepare_commit_phase_with_block_store_state_computer,
         prepare_executed_blocks_with_executed_ledger_info,
         prepare_executed_blocks_with_ordered_ledger_info,
     },
 };
-use futures::channel::{mpsc::UnboundedReceiver, mpsc::UnboundedSender, oneshot};
+use futures::channel::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot,
+};
 use tokio::runtime::Runtime;
-use crate::experimental::execution_phase::ResetEventType;
 
 const TEST_CHANNEL_SIZE: usize = 30;
 
@@ -251,10 +253,13 @@ mod commit_phase_e2e_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase_reset_tx.send(ResetEventType {
-                reset_callback: tx,
-                reconfig: false,
-            }).await.ok();
+            commit_phase_reset_tx
+                .send(ResetEventType {
+                    reset_callback: tx,
+                    reconfig: false,
+                })
+                .await
+                .ok();
             rx.await.ok();
 
             // now commit_tx should be exhausted. We can send more without blocking.
@@ -642,10 +647,13 @@ mod commit_phase_function_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase.process_reset_event(ResetEventType {
-                reset_callback: tx,
-                reconfig: false,
-            }).await.ok();
+            commit_phase
+                .process_reset_event(ResetEventType {
+                    reset_callback: tx,
+                    reconfig: false,
+                })
+                .await
+                .ok();
             rx.await.ok();
 
             // the block should be dropped

@@ -344,5 +344,5 @@ pub static DECOUPLED_EXECUTION__PERSISTING_PHASE_RESET_CHANNEL: Lazy<IntGauge> =
         "diem_decoupled_execution__persisting_phase_reset_channel",
         "Number of pending persisting phase reset events"
     )
-        .unwrap()
+    .unwrap()
 });

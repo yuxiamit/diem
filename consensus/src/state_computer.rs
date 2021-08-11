@@ -79,7 +79,8 @@ impl StateComputer for ExecutionProxy {
 
         for block in blocks {
             block_ids.push(block.id());
-            info!("to persist block {:?}, transactions {:?} compute status {:?} reconfig events {:?}",
+            info!(
+                "to persist block {:?}, transactions {:?} compute status {:?} reconfig events {:?}",
                 block.id(),
                 block.block().transactions_to_execute(),
                 block.compute_result().compute_status(),

@@ -285,10 +285,8 @@ fn transfer_and_reconfig(
             println!(
                 "Changing diem version to {}: {:?}",
                 transferred,
-                client.change_diem_version(
-                    &["change_diem_version", &transferred.to_string()],
-                    true
-                )
+                client
+                    .change_diem_version(&["change_diem_version", &transferred.to_string()], true)
             );
         }
 
