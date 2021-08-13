@@ -12,13 +12,17 @@ use diem_crypto::HashValue;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::{Error as ExecutionError, StateComputeResult};
 use fail::fail_point;
-use futures::SinkExt;
+use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use std::{boxed::Box, sync::Arc};
 
 use crate::{
-    experimental::{errors::Error, execution_phase::ResetAck},
+    experimental::{
+        errors::Error,
+        execution_phase::{ExecutionPhaseCallBackType, ResetAck, ResetEventType},
+    },
     state_replication::StateComputerCommitCallBackType,
 };
+use diem_logger::prelude::*;
 use futures::channel::oneshot;
 
 /// Ordering-only execution proxy
@@ -27,16 +31,16 @@ use futures::channel::oneshot;
 pub struct OrderingStateComputer {
     // the channel to pour vectors of blocks into
     // the real execution phase (will be handled in ExecutionPhase).
-    executor_channel: Sender<ExecutionChannelType>,
+    executor_channel: UnboundedSender<ExecutionChannelType>,
     state_computer_for_sync: Arc<dyn StateComputer>,
-    reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
+    reset_event_channel_tx: Sender<ResetEventType>,
 }
 
 impl OrderingStateComputer {
     pub fn new(
-        executor_channel: Sender<ExecutionChannelType>,
+        executor_channel: UnboundedSender<ExecutionChannelType>,
         state_computer_for_sync: Arc<dyn StateComputer>,
-        reset_event_channel_tx: Sender<oneshot::Sender<ResetAck>>,
+        reset_event_channel_tx: Sender<ResetEventType>,
     ) -> Self {
         Self {
             executor_channel,
@@ -69,22 +73,26 @@ impl StateComputer for OrderingStateComputer {
         blocks: &[Arc<ExecutedBlock>],
         finality_proof: LedgerInfoWithSignatures,
         callback: StateComputerCommitCallBackType,
+        executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), ExecutionError> {
         assert!(!blocks.is_empty());
 
         let ordered_block = blocks.iter().map(|b| b.block().clone()).collect();
 
-        self.executor_channel
+        if let Err(e) = self
+            .executor_channel
             .clone()
             .send(ExecutionChannelType(
                 ordered_block,
                 finality_proof,
+                executor_failure_callback,
                 callback,
             ))
             .await
-            .map_err(|e| ExecutionError::InternalError {
-                error: e.to_string(),
-            })?;
+        {
+            // probably the execution phase is gone
+            error!("Send failure {}", e.to_string());
+        }
         Ok(())
     }
 
@@ -93,16 +101,20 @@ impl StateComputer for OrderingStateComputer {
         fail_point!("consensus::sync_to", |_| {
             Err(anyhow::anyhow!("Injected error in sync_to").into())
         });
-        self.state_computer_for_sync.sync_to(target).await?;
 
         // reset execution phase and commit phase
         let (tx, rx) = oneshot::channel::<ResetAck>();
         self.reset_event_channel_tx
             .clone()
-            .send(tx)
+            .send(ResetEventType {
+                reset_callback: tx,
+                reconfig: target.ledger_info().ends_epoch(),
+            })
             .await
             .map_err(|_| Error::ResetDropped)?;
         rx.await.map_err(|_| Error::ResetDropped)?;
+
+        self.state_computer_for_sync.sync_to(target.clone()).await?;
 
         Ok(())
     }

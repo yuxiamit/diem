@@ -274,7 +274,7 @@ impl BlockStore {
         let block_id_to_commit = finality_proof.ledger_info().consensus_block_id();
         let block_to_commit = self
             .get_block(block_id_to_commit)
-            .ok_or_else(|| format_err!("Committed block id not found"))?;
+            .ok_or_else(|| format_err!("Committed block id not found {}", block_id_to_commit))?;
 
         // First make sure that this commit is new.
         ensure!(
@@ -288,15 +288,16 @@ impl BlockStore {
 
         assert!(!blocks_to_commit.is_empty());
 
-        let block_tree = self.inner.clone();
-        let storage = self.storage.clone();
-        let commit_root = self.commit_root();
-
         self.inner
             .write()
             .update_ordered_root_id(block_to_commit.id());
         update_counters_for_ordered_blocks(&blocks_to_commit);
 
+        // prepare values for callback
+        let block_tree_in_commit_callback = self.inner.clone();
+        let block_tree_in_execution_failure_callback = self.inner.clone();
+        let storage = self.storage.clone();
+        let commit_root_in_commit_callback = self.commit_root();
         // asynchronously execute and commit
         self.state_computer
             .commit(
@@ -306,17 +307,38 @@ impl BlockStore {
                     move |executed_blocks: &[Arc<ExecutedBlock>],
                           commit_decision: LedgerInfoWithSignatures| {
                         // TODO: shall we merge these into a single write lock event?
-                        block_tree
+                        block_tree_in_commit_callback
                             .write()
                             .update_highest_ledger_info(commit_decision);
                         update_counters_and_prune_blocks(
-                            block_tree,
-                            storage,
-                            commit_root,
+                            block_tree_in_commit_callback,
+                            storage.clone(),
+                            commit_root_in_commit_callback,
                             executed_blocks,
                         );
                     },
                 ),
+                Some(Box::new(move |finality_proof| {
+                    let block_tree_handle = block_tree_in_execution_failure_callback.clone();
+                    let commit_root = block_tree_handle.read().commit_root();
+                    debug!(
+                        "refetching blocks starting from round {} to {}",
+                        commit_root.round(),
+                        finality_proof.commit_info().round()
+                    );
+                    let res = block_tree_handle
+                        .read()
+                        .path_from_root_to_block(
+                            finality_proof.ledger_info().consensus_block_id(),
+                            commit_root.id(),
+                            commit_root.round(),
+                        )
+                        .unwrap_or_else(Vec::new)
+                        .iter()
+                        .map(|eb| eb.block().clone())
+                        .collect();
+                    res
+                })),
             )
             .await
             .expect("Failed to persist commit");

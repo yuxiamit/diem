@@ -15,28 +15,28 @@ use executor_types::StateComputeResult;
 use std::sync::Arc;
 
 use crate::{
-    experimental::execution_phase::{ExecutionChannelType, ResetAck},
+    experimental::execution_phase::{ExecutionChannelType, ResetEventType},
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, EmptyStateComputer},
 };
 use consensus_types::{executed_block::ExecutedBlock, quorum_cert::QuorumCert};
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{account_address::AccountAddress, validator_signer::ValidatorSigner};
-use futures::{channel::oneshot, StreamExt};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver},
+    StreamExt,
+};
 use rand::Rng;
 use std::collections::BTreeMap;
 
-pub fn prepare_ordering_state_computer(
-    channel_size: usize,
-) -> (
+pub fn prepare_ordering_state_computer() -> (
     Arc<OrderingStateComputer>,
-    Receiver<ExecutionChannelType>,
-    Receiver<oneshot::Sender<ResetAck>>,
+    UnboundedReceiver<ExecutionChannelType>,
+    Receiver<ResetEventType>,
 ) {
-    let (commit_result_tx, commit_result_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+    let (commit_result_tx, commit_result_rx) = unbounded::<ExecutionChannelType>();
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
     let state_computer = Arc::new(OrderingStateComputer::new(
         commit_result_tx,
         Arc::new(EmptyStateComputer {}),
@@ -54,10 +54,9 @@ pub fn random_empty_block(signer: &ValidatorSigner, qc: QuorumCert) -> Block {
 #[test]
 fn test_ordering_state_computer() {
     let num_nodes = 1;
-    let channel_size = 30;
     let mut runtime = consensus_runtime();
 
-    let (state_computer, mut commit_result_rx, _) = prepare_ordering_state_computer(channel_size);
+    let (state_computer, mut commit_result_rx, _) = prepare_ordering_state_computer();
 
     let (signers, _) = random_validator_verifier(num_nodes, None, false);
     let signer = &signers[0];
@@ -91,11 +90,16 @@ fn test_ordering_state_computer() {
     // ordering_state_computer should send the same block and finality proof to the channel
     timed_block_on(&mut runtime, async move {
         state_computer
-            .commit(&blocks, li_sig.clone(), empty_state_computer_call_back())
+            .commit(
+                &blocks,
+                li_sig.clone(),
+                empty_state_computer_call_back(),
+                None,
+            )
             .await
             .ok();
 
-        let ExecutionChannelType(ordered_block, finality_proof, _) =
+        let ExecutionChannelType(ordered_block, finality_proof, _, _) =
             commit_result_rx.next().await.unwrap();
         assert_eq!(ordered_block.len(), 1);
         assert_eq!(ordered_block[0], block);

@@ -24,7 +24,7 @@ use consensus_types::block::block_test_utils::certificate_for_genesis;
 
 use crate::{
     experimental::{
-        commit_phase::CommitChannelType, execution_phase::ResetAck,
+        commit_phase::CommitChannelType, execution_phase::ResetEventType,
         tests::test_utils::prepare_commit_phase_with_block_store_state_computer,
     },
     state_replication::empty_state_computer_call_back,
@@ -32,18 +32,16 @@ use crate::{
 };
 use consensus_types::executed_block::ExecutedBlock;
 use executor_types::StateComputeResult;
-use futures::channel::oneshot;
+use futures::channel::mpsc::unbounded;
 
 #[test]
 fn decoupled_execution_integration() {
-    let channel_size = 30;
     let mut runtime = consensus_runtime();
 
-    let (execution_phase_tx, execution_phase_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+    let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
     let state_computer = Arc::new(OrderingStateComputer::new(
         execution_phase_tx,
@@ -117,7 +115,7 @@ fn decoupled_execution_integration() {
         };
 
         // it commits the block
-        if let Some(ExecutionChannelType(executed_blocks, finality_proof, callback)) =
+        if let Some(ExecutionChannelType(executed_blocks, finality_proof, _, callback)) =
             commit_result_rx.next().await
         {
             assert_eq!(executed_blocks.len(), 3); // a1 a2 a3

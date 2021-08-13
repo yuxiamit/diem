@@ -33,11 +33,11 @@ use std::{
 use tokio::time;
 
 use crate::{
-    experimental::execution_phase::{reset_ack_new, ResetAck},
+    experimental::execution_phase::{reset_ack_new, ResetEventType},
     state_replication::StateComputerCommitCallBackType,
 };
 use diem_logger::error;
-use futures::{channel::oneshot, prelude::stream::FusedStream};
+use futures::{channel::mpsc::UnboundedReceiver, prelude::stream::FusedStream};
 
 /*
 Commit phase takes in the executed blocks from the execution
@@ -132,7 +132,7 @@ impl PendingBlocks {
 }
 
 pub struct CommitPhase {
-    commit_channel_recv: Receiver<CommitChannelType>,
+    commit_channel_recv: UnboundedReceiver<CommitChannelType>,
     execution_proxy: Arc<dyn StateComputer>,
     blocks: Option<PendingBlocks>,
     commit_msg_rx: channel::Receiver<VerifiedEvent>,
@@ -143,7 +143,8 @@ pub struct CommitPhase {
     network_sender: NetworkSender,
     timeout_event_tx: Sender<CommitVote>,
     timeout_event_rx: Receiver<CommitVote>,
-    reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
+    reset_event_rx: Receiver<ResetEventType>,
+    stop_epoch: bool,
 }
 
 /// Wrapper for ExecutionProxy.commit
@@ -161,6 +162,7 @@ pub async fn commit(
             &blocks_to_commit,
             pending_blocks.ledger_info_sig().clone(),
             pending_blocks.take_callback(),
+            None,
         )
         .await
         .expect("Failed to persist commit");
@@ -195,7 +197,7 @@ async fn broadcast_commit_vote_with_retry(
 
 impl CommitPhase {
     pub fn new(
-        commit_channel_recv: Receiver<CommitChannelType>,
+        commit_channel_recv: UnboundedReceiver<CommitChannelType>,
         execution_proxy: Arc<dyn StateComputer>,
         commit_msg_rx: channel::Receiver<VerifiedEvent>,
         verifier: ValidatorVerifier,
@@ -203,7 +205,7 @@ impl CommitPhase {
         author: Author,
         back_pressure: Arc<AtomicU64>,
         network_sender: NetworkSender,
-        reset_event_rx: Receiver<oneshot::Sender<ResetAck>>,
+        reset_event_rx: Receiver<ResetEventType>,
     ) -> Self {
         let (timeout_event_tx, timeout_event_rx) = channel::new::<CommitVote>(
             2,
@@ -222,6 +224,7 @@ impl CommitPhase {
             timeout_event_tx,
             timeout_event_rx,
             reset_event_rx,
+            stop_epoch: false,
         }
     }
 
@@ -363,21 +366,27 @@ impl CommitPhase {
         self.back_pressure.load(Ordering::SeqCst)
     }
 
-    pub async fn process_reset_event(
-        &mut self,
-        reset_event_callback: oneshot::Sender<ResetAck>,
-    ) -> anyhow::Result<()> {
+    pub async fn process_reset_event(&mut self, reset_event: ResetEventType) -> anyhow::Result<()> {
+        let ResetEventType {
+            reset_callback,
+            reconfig,
+        } = reset_event;
+
         // reset the commit phase
 
         // exhaust the commit channel
         // we do not have to exhaust the commit message channel because inconsistent messages will be ignored
         while self.commit_channel_recv.next().now_or_never().is_some() {}
 
+        if reconfig {
+            self.stop_epoch = true;
+        }
+
         // reset local block
         self.blocks = None;
 
         // activate the callback
-        reset_event_callback
+        reset_callback
             .send(reset_ack_new())
             .map_err(|_| Error::ResetDropped)?;
 
@@ -385,7 +394,7 @@ impl CommitPhase {
     }
 
     pub async fn start(mut self) {
-        loop {
+        while !self.stop_epoch {
             // if we are still collecting the signatures
             tokio::select! {
                 // process messages dispatched from epoch_manager

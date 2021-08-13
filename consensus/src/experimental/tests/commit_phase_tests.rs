@@ -45,14 +45,17 @@ use crate::{
 };
 
 use crate::experimental::{
-    execution_phase::ResetAck,
+    execution_phase::{ResetAck, ResetEventType},
     tests::test_utils::{
         prepare_commit_phase_with_block_store_state_computer,
         prepare_executed_blocks_with_executed_ledger_info,
         prepare_executed_blocks_with_ordered_ledger_info,
     },
 };
-use futures::channel::oneshot;
+use futures::channel::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot,
+};
 use tokio::runtime::Runtime;
 
 const TEST_CHANNEL_SIZE: usize = 30;
@@ -60,10 +63,10 @@ const TEST_CHANNEL_SIZE: usize = 30;
 pub fn prepare_commit_phase(
     runtime: &Runtime,
 ) -> (
-    Sender<CommitChannelType>,
+    UnboundedSender<CommitChannelType>,
     Sender<VerifiedEvent>,
-    Sender<oneshot::Sender<ResetAck>>,
-    Receiver<ExecutionChannelType>,
+    Sender<ResetEventType>,
+    UnboundedReceiver<ExecutionChannelType>,
     Receiver<Event<ConsensusMsg>>,
     Arc<Mutex<MetricsSafetyRules>>,
     Vec<ValidatorSigner>,
@@ -257,7 +260,13 @@ mod commit_phase_e2e_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase_reset_tx.send(tx).await.ok();
+            commit_phase_reset_tx
+                .send(ResetEventType {
+                    reset_callback: tx,
+                    reconfig: false,
+                })
+                .await
+                .ok();
             rx.await.ok();
 
             // now commit_tx should be exhausted. We can send more without blocking.
@@ -612,7 +621,13 @@ mod commit_phase_function_tests {
 
             // reset
             let (tx, rx) = oneshot::channel::<ResetAck>();
-            commit_phase.process_reset_event(tx).await.ok();
+            commit_phase
+                .process_reset_event(ResetEventType {
+                    reset_callback: tx,
+                    reconfig: false,
+                })
+                .await
+                .ok();
             rx.await.ok();
 
             // the block should be dropped

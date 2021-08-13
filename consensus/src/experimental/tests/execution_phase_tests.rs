@@ -10,7 +10,7 @@ use diem_types::ledger_info::{LedgerInfo, LedgerInfoWithSignatures};
 use crate::{
     experimental::{
         commit_phase::CommitChannelType,
-        execution_phase::{reset_ack_new, ExecutionChannelType, ResetAck},
+        execution_phase::{reset_ack_new, ExecutionChannelType, ResetAck, ResetEventType},
     },
     state_replication::empty_state_computer_call_back,
     test_utils::{consensus_runtime, timed_block_on, RandomComputeResultStateComputer},
@@ -20,7 +20,13 @@ use consensus_types::block::block_test_utils::certificate_for_genesis;
 use diem_crypto::{ed25519::Ed25519Signature, hash::ACCUMULATOR_PLACEHOLDER_HASH, HashValue};
 use diem_types::{account_address::AccountAddress, validator_verifier::random_validator_verifier};
 use executor_types::StateComputeResult;
-use futures::{channel::oneshot, SinkExt, StreamExt};
+use futures::{
+    channel::{
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    SinkExt, StreamExt,
+};
 use std::{collections::BTreeMap, sync::Arc};
 
 const EXECUTION_PHASE_TEST_CHANNEL_SIZE: usize = 30;
@@ -28,23 +34,19 @@ const EXECUTION_PHASE_TEST_CHANNEL_SIZE: usize = 30;
 fn prepare_execution_phase() -> (
     ExecutionPhase,
     HashValue,
-    Sender<ExecutionChannelType>,
-    Receiver<CommitChannelType>,
-    Sender<oneshot::Sender<ResetAck>>,
-    Receiver<oneshot::Sender<ResetAck>>,
+    UnboundedSender<ExecutionChannelType>,
+    UnboundedReceiver<CommitChannelType>,
+    Sender<ResetEventType>,
+    Receiver<ResetEventType>,
 ) {
-    let channel_size = EXECUTION_PHASE_TEST_CHANNEL_SIZE;
-
-    let (execution_phase_tx, execution_phase_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+    let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
 
     let (execution_phase_reset_tx, execution_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+        channel::new_test::<ResetEventType>(1);
 
-    let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+    let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new_test::<ResetEventType>(1);
 
-    let (commit_phase_tx, commit_phase_rx) = channel::new_test::<CommitChannelType>(channel_size);
+    let (commit_phase_tx, commit_phase_rx) = unbounded::<CommitChannelType>();
 
     let random_state_computer = RandomComputeResultStateComputer::new();
     let random_execute_result_root_hash = random_state_computer.get_root_hash();
@@ -109,6 +111,7 @@ fn test_execution_phase_e2e() {
             .send(ExecutionChannelType(
                 blocks,
                 li_sig.clone(),
+                None,
                 empty_state_computer_call_back(),
             ))
             .await
@@ -167,6 +170,7 @@ fn test_execution_phase_reset() {
                 .send(ExecutionChannelType(
                     blocks.clone(),
                     li_sig.clone(),
+                    None,
                     empty_state_computer_call_back(),
                 ))
                 .await
@@ -177,11 +181,20 @@ fn test_execution_phase_reset() {
         let (tx, rx) = oneshot::channel::<ResetAck>();
 
         tokio::spawn(async move {
-            let tx2 = commit_phase_reset_rx.next().await.unwrap();
+            let ResetEventType {
+                reset_callback: tx2,
+                reconfig: _,
+            } = commit_phase_reset_rx.next().await.unwrap();
             tx2.send(reset_ack_new()).ok();
         });
 
-        execution_phase.process_reset_event(tx).await.ok();
+        execution_phase
+            .process_reset_event(ResetEventType {
+                reset_callback: tx,
+                reconfig: false,
+            })
+            .await
+            .ok();
 
         rx.await.ok();
 
@@ -190,6 +203,7 @@ fn test_execution_phase_reset() {
             .send(ExecutionChannelType(
                 blocks.clone(),
                 li_sig.clone(),
+                None,
                 empty_state_computer_call_back(),
             ))
             .await

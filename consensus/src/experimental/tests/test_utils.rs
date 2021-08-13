@@ -5,7 +5,7 @@ use crate::{
     block_storage::BlockStore,
     experimental::{
         commit_phase::{CommitChannelType, CommitPhase},
-        execution_phase::{ExecutionChannelType, ResetAck},
+        execution_phase::{ExecutionChannelType, ResetEventType},
         ordering_state_computer::OrderingStateComputer,
     },
     metrics_safety_rules::MetricsSafetyRules,
@@ -38,7 +38,7 @@ use diem_types::{
     waypoint::Waypoint,
 };
 use executor_types::StateComputeResult;
-use futures::channel::oneshot;
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use network::{
     peer_manager::{ConnectionRequestSender, PeerManagerRequestSender},
     protocols::network::{Event, NewNetworkSender},
@@ -55,10 +55,10 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     block_store_state_computer: Arc<dyn StateComputer>,
     channel_size: usize,
 ) -> (
-    Sender<CommitChannelType>,
+    UnboundedSender<CommitChannelType>,
     Sender<VerifiedEvent>,
-    Sender<oneshot::Sender<ResetAck>>,
-    Receiver<ExecutionChannelType>,
+    Sender<ResetEventType>,
+    UnboundedReceiver<ExecutionChannelType>,
     Receiver<Event<ConsensusMsg>>,
     Arc<Mutex<MetricsSafetyRules>>,
     Vec<ValidatorSigner>,
@@ -108,12 +108,11 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     let (self_loop_tx, self_loop_rx) = channel::new_test(1000);
     let network = NetworkSender::new(author, network_sender, self_loop_tx, validators);
 
-    let (commit_result_tx, commit_result_rx) =
-        channel::new_test::<ExecutionChannelType>(channel_size);
+    let (commit_result_tx, commit_result_rx) = unbounded::<ExecutionChannelType>();
 
     // Note: we assume no OrderingStateComputer::sync_to will be called during the test
     // OrderingStateComputer::sync_to might block the inner state computer
-    let (execution_phase_reset_tx, _) = channel::new_test::<oneshot::Sender<ResetAck>>(1);
+    let (execution_phase_reset_tx, _) = channel::new_test::<ResetEventType>(1);
 
     let state_computer = Arc::new(OrderingStateComputer::new(
         commit_result_tx,
@@ -137,12 +136,11 @@ pub fn prepare_commit_phase_with_block_store_state_computer(
     let safety_rules_container = Arc::new(Mutex::new(safety_rules));
 
     // setting up channels
-    let (commit_tx, commit_rx) = channel::new_test::<CommitChannelType>(channel_size);
+    let (commit_tx, commit_rx) = unbounded::<CommitChannelType>();
 
     let (msg_tx, msg_rx) = channel::new_test::<VerifiedEvent>(channel_size);
 
-    let (commit_phase_reset_tx, commit_phase_reset_rx) =
-        channel::new_test::<oneshot::Sender<ResetAck>>(1);
+    let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new_test::<ResetEventType>(1);
 
     let commit_phase = CommitPhase::new(
         commit_rx,

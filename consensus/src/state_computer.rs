@@ -3,6 +3,7 @@
 
 use crate::{
     error::StateSyncError,
+    experimental::execution_phase::ExecutionPhaseCallBackType,
     state_replication::{StateComputer, StateComputerCommitCallBackType},
 };
 use anyhow::Result;
@@ -70,6 +71,7 @@ impl StateComputer for ExecutionProxy {
         blocks: &[Arc<ExecutedBlock>],
         finality_proof: LedgerInfoWithSignatures,
         callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), ExecutionError> {
         let mut block_ids = Vec::new();
         let mut txns = Vec::new();

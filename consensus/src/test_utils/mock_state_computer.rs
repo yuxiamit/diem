@@ -3,6 +3,7 @@
 
 use crate::{
     error::StateSyncError,
+    experimental::execution_phase::ExecutionPhaseCallBackType,
     state_replication::{StateComputer, StateComputerCommitCallBackType},
     test_utils::mock_storage::MockStorage,
 };
@@ -57,7 +58,8 @@ impl StateComputer for MockStateComputer {
         &self,
         blocks: &[Arc<ExecutedBlock>],
         commit: LedgerInfoWithSignatures,
-        call_back: StateComputerCommitCallBackType,
+        callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), Error> {
         self.consensus_db
             .commit_to_storage(commit.ledger_info().clone());
@@ -77,7 +79,7 @@ impl StateComputer for MockStateComputer {
 
         let _ = self.commit_callback.unbounded_send(commit.clone());
 
-        call_back(blocks, commit);
+        callback(blocks, commit);
 
         Ok(())
     }
@@ -113,8 +115,9 @@ impl StateComputer for EmptyStateComputer {
     async fn commit(
         &self,
         _blocks: &[Arc<ExecutedBlock>],
-        _commit: LedgerInfoWithSignatures,
-        _call_back: StateComputerCommitCallBackType,
+        _finality_proof: LedgerInfoWithSignatures,
+        _callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -155,8 +158,9 @@ impl StateComputer for RandomComputeResultStateComputer {
     async fn commit(
         &self,
         _blocks: &[Arc<ExecutedBlock>],
-        _commit: LedgerInfoWithSignatures,
-        _call_back: StateComputerCommitCallBackType,
+        _finality_proof: LedgerInfoWithSignatures,
+        _callback: StateComputerCommitCallBackType,
+        _executor_failure_callback: ExecutionPhaseCallBackType,
     ) -> Result<(), Error> {
         Ok(())
     }

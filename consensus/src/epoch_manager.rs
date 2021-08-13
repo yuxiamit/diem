@@ -7,7 +7,7 @@ use crate::{
     error::{error_kind, DbError},
     experimental::{
         commit_phase::{CommitChannelType, CommitPhase},
-        execution_phase::{ExecutionChannelType, ExecutionPhase, ResetAck},
+        execution_phase::{ExecutionChannelType, ExecutionPhase, ResetEventType},
         ordering_state_computer::OrderingStateComputer,
     },
     liveness::{
@@ -43,7 +43,7 @@ use diem_types::{
     epoch_state::EpochState,
     on_chain_config::{OnChainConfigPayload, ValidatorSet},
 };
-use futures::{channel::oneshot, select, SinkExt, StreamExt};
+use futures::{channel::mpsc::unbounded, select, SinkExt, StreamExt};
 use network::protocols::network::Event;
 use safety_rules::SafetyRulesManager;
 use std::{
@@ -302,22 +302,17 @@ impl EpochManager {
         safety_rules_container: Arc<Mutex<MetricsSafetyRules>>,
         network_sender: NetworkSender,
     ) -> anyhow::Result<(RoundManager, ExecutionPhase, CommitPhase)> {
-        let (execution_phase_tx, execution_phase_rx) = channel::new::<ExecutionChannelType>(
-            self.config.channel_size,
-            &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_CHANNEL,
+        let (execution_phase_tx, execution_phase_rx) = unbounded::<ExecutionChannelType>();
+
+        let (execution_phase_reset_tx, execution_phase_reset_rx) = channel::new::<ResetEventType>(
+            1,
+            &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL,
         );
 
-        let (execution_phase_reset_tx, execution_phase_reset_rx) =
-            channel::new::<oneshot::Sender<ResetAck>>(
-                1,
-                &counters::DECOUPLED_EXECUTION__EXECUTION_PHASE_RESET_CHANNEL,
-            );
-
-        let (commit_phase_reset_tx, commit_phase_reset_rx) =
-            channel::new::<oneshot::Sender<ResetAck>>(
-                1,
-                &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL,
-            );
+        let (commit_phase_reset_tx, commit_phase_reset_rx) = channel::new::<ResetEventType>(
+            1,
+            &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_RESET_CHANNEL,
+        );
 
         let state_computer: Arc<dyn StateComputer> = Arc::new(OrderingStateComputer::new(
             execution_phase_tx,
@@ -345,10 +340,7 @@ impl EpochManager {
             self.config.max_block_size,
         );
 
-        let (commit_phase_tx, commit_phase_rx) = channel::new::<CommitChannelType>(
-            self.config.channel_size,
-            &counters::DECOUPLED_EXECUTION__COMMIT_PHASE_CHANNEL,
-        );
+        let (commit_phase_tx, commit_phase_rx) = unbounded::<CommitChannelType>();
 
         let execution_phase = ExecutionPhase::new(
             execution_phase_rx,
