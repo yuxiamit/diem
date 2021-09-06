@@ -1,8 +1,9 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// modified from https://rust-unofficial.github.io/too-many-lists/fourth-final.html
+// modified from https://rust-unofficial.github.io/too-many-lists/fourth-final.html (MIT License)
 
+// maybe later we can move this to /common
 use std::rc::Rc;
 use std::cell::{Ref, RefMut, RefCell};
 use std::borrow::BorrowMut;

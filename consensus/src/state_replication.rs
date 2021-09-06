@@ -8,12 +8,13 @@ use diem_crypto::HashValue;
 use diem_types::ledger_info::LedgerInfoWithSignatures;
 use executor_types::{Error as ExecutionError, StateComputeResult};
 use std::sync::Arc;
+use std::rc::Rc;
 
 pub type StateComputerCommitCallBackType =
-    Box<dyn FnOnce(&[Arc<ExecutedBlock>], LedgerInfoWithSignatures) + Send + Sync>;
+    Rc<dyn FnOnce(&[Arc<ExecutedBlock>], LedgerInfoWithSignatures) + Send + Sync>;
 #[cfg(test)]
 pub fn empty_state_computer_call_back() -> StateComputerCommitCallBackType {
-    Box::new(|_, _| {})
+    Rc::new(|_, _| {})
 }
 
 /// Retrieves and updates the status of transactions on demand (e.g., via talking with Mempool)
