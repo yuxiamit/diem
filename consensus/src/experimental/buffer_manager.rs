@@ -45,6 +45,24 @@ pub struct OrderedBlocks {
     pub callback: StateComputerCommitCallBackType,
 }
 
+/*
+ *                       LedgerInfo Buffer
+ *
+ *                      ┌────────────┐                    ┌────────────┐
+ *                      │ LedgerInfo │                    │ LedgerInfo │
+ *                  ────► BufferItem ├────────────────────► BufferItem ├───►
+ *                      └─────┬──────┘                    └─────┬──────┘
+ *                            │ Link                            │ Link
+ *                            │                                 │
+ *     ┌────────────┐   ┌─────▼──────┐   ┌────────────┐   ┌─────▼──────┐
+ *     │ BufferItem │   │ BufferItem │   │ BufferItem │   │ BufferItem │
+ * ────►            ├───►            ├───►            ├───►            ├───►
+ *     │ Block      │   │ LedgerInfo │   │ Block      │   │ LedgerInfo │
+ *     └────────────┘   └────────────┘   └────────────┘   └────────────┘
+ *
+ *      Buffer
+ */
+
 pub enum BufferItem {
     Block(Arc<ExecutedBlock>), // TODO: remove Arc
     // the second item is to store a signature received from a commit vote
@@ -67,6 +85,7 @@ pub type Receiver<T> = UnboundedReceiver<T>;
 /// StateManager handles the states of ordered blocks and
 /// interacts with the execution phase, the signing phase, and
 /// the persisting phase.
+///
 pub struct StateManager {
     author: Author,
 
@@ -364,7 +383,7 @@ impl StateManager {
                 let LedgerInfoBufferItem{
                     commit_ledger_info, link,
                 } = get_elem(&current_cursor);
-                let buffer_item = get_elem(link);
+                let buffer_item = get_elem(&link);
                 if let BufferItem::FinalityProof(finality_proof, _, _) = buffer_item {
                     self.signing_phase_tx.send(SigningRequest {
                         ordered_ledger_info: finality_proof.clone(),
@@ -419,12 +438,12 @@ impl StateManager {
                         }
                         current_buffer_cursor = get_next(&current_buffer_cursor);
                     }
-                    let buffer_item = get_elem(link);
+                    let buffer_item = get_elem(&link);
                     if let BufferItem::FinalityProof(_, _, callback) = buffer_item {
                         self.persisting_phase_tx.send(PersistingRequest {
                             blocks: batch,
                             commit_ledger_info: commit_ledger_info.clone(),
-                            callback: Rc::clone(callback),
+                            callback: Rc::clone(&callback),
                         }).await?;
                     }
                     else {
@@ -449,7 +468,7 @@ impl StateManager {
                     while current_cursor.is_some() {
                         let LedgerInfoBufferItem {
                             commit_ledger_info, link: _,
-                        } = get_elem_mut(&current_cursor);
+                        } = &mut get_elem_mut(&current_cursor);
                         if commit_ledger_info.ledger_info() == cv.ledger_info() {
                             commit_ledger_info.add_signature(
                                 cv.author(),
@@ -464,7 +483,7 @@ impl StateManager {
                     // travel the un-executed part of buffer (execution root to the end)
                     let mut current_cursor = self.execution_root.clone();
                     while current_cursor.is_some() {
-                        let buffer_item = get_elem_mut(&current_cursor);
+                        let buffer_item = &mut get_elem_mut(&current_cursor);
                         if let BufferItem::FinalityProof(
                             finality_proof,
                             sig_cache,
