@@ -39,21 +39,28 @@ pub struct OrderedBlocks {
 }
 
 /*
- *                       LedgerInfo Buffer
- *
- *                      ┌────────────┐                    ┌────────────┐
+ *                                                         ┌─────────┐
+ *                                                         │ Signing │
+ *                                                         │ Root    │
+ *                                                         └────┬────┘
+ *     LedgerInfo Buffer                                        │
+ *                                                              │
+ *                      ┌────────────┐                    ┌─────▼──────┐
  *                      │ LedgerInfo │                    │ LedgerInfo │
  *                  ────► BufferItem ├────────────────────► BufferItem ├───►
  *                      └─────┬──────┘                    └─────┬──────┘
  *                            │ Link                            │ Link
  *                            │                                 │
- *     ┌────────────┐   ┌─────▼──────┐   ┌────────────┐   ┌─────▼──────┐
- *     │ BufferItem │   │ BufferItem │   │ BufferItem │   │ BufferItem │
- * ────►            ├───►            ├───►            ├───►            ├───►
- *     │ Block      │   │ LedgerInfo │   │ Block      │   │ LedgerInfo │
- *     └────────────┘   └────────────┘   └────────────┘   └────────────┘
- *
- *      Buffer
+ *     ┌────────────┐   ┌─────▼──────┐   ┌────────────┐   ┌─────▼──────┐   ┌────────────┐   ┌────────────┐
+ *     │ BufferItem │   │ BufferItem │   │ BufferItem │   │ BufferItem │   │ BufferItem │   │ BufferItem │
+ * ────►            ├───►            ├───►            ├───►            ├───►            ├───►            ├───►
+ *     │ Block      │   │ LedgerInfo │   │ Block      │   │ LedgerInfo │   │ Block      │   │ LedgerInfo │
+ *     └────────────┘   └─────▲──────┘   └────────────┘   └────────────┘   └─────▲──────┘   └────────────┘
+ *                            │                                                  │
+ *      Buffer          ┌─────┴───────┐                                    ┌─────┴──────┐
+ *                      │ Aggregation │                                    │ Execution  │
+ *                      │ Root        │                                    │ Root       │
+ *                      └─────────────┘                                    └────────────┘
  */
 
 pub struct FinalityProofItem(
