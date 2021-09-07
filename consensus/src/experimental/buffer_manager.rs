@@ -12,15 +12,18 @@ use crate::{
     round_manager::VerifiedEvent,
     state_replication::StateComputerCommitCallBackType,
 };
-use consensus_types::{common::Author, executed_block::ExecutedBlock};
+use consensus_types::{block::Block, common::Author, executed_block::ExecutedBlock};
 use diem_crypto::ed25519::Ed25519Signature;
 use diem_types::{
     account_address::AccountAddress, ledger_info::LedgerInfoWithSignatures,
     validator_verifier::ValidatorVerifier,
 };
-use futures::channel::{
-    mpsc::{UnboundedReceiver, UnboundedSender},
-    oneshot,
+use futures::{
+    channel::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    SinkExt,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -162,6 +165,60 @@ impl StateManager {
 
             verifier,
         }
+    }
+
+    async fn process_ordered_blocks(
+        &mut self,
+        ordered_blocks: OrderedBlocks,
+    ) -> anyhow::Result<()> {
+        let OrderedBlocks {
+            blocks,
+            finality_proof,
+            callback,
+        } = ordered_blocks;
+
+        // push blocks to buffer
+        for eb in blocks.iter() {
+            self.buffer
+                .push_back(BufferItem::Block(Arc::new(eb.clone())));
+        }
+
+        self.buffer
+            .push_back(BufferItem::FinalityProof(Box::new(FinalityProofItem(
+                finality_proof.clone(),
+                BTreeMap::new(),
+                callback,
+            ))));
+
+        // send blocks to execution phase
+        self.execution_phase_tx
+            .send(ExecutionRequest {
+                blocks: blocks
+                    .iter()
+                    .map(|eb| eb.block().clone())
+                    .collect::<Vec<Block>>(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn process_reset_req(&mut self, reset_event: ResetRequest) -> anyhow::Result<()> {
+        let ResetRequest { tx, reconfig } = reset_event;
+
+        // clear the buffer
+        while self.buffer.pop_back().is_some() {}
+        while self.li_buffer.pop_back().is_some() {}
+
+        self.end_epoch = self.end_epoch || reconfig;
+
+        // reset roots
+        self.execution_root = self.buffer.head.as_ref().cloned();
+        self.signing_root = self.li_buffer.head.as_ref().cloned();
+        self.aggregation_root = self.buffer.head.as_ref().cloned();
+
+        // ack reset
+        tx.send(reset_ack_new()).unwrap();
+        Ok(())
     }
 
     async fn start(self) {
