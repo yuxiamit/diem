@@ -19,7 +19,7 @@ fn test() {
 fn execution_correctness(
     enable_signing: bool,
 ) -> (Box<dyn ExecutionCorrectness>, Option<Ed25519PublicKey>) {
-    let (config, _handle, _db) = start_storage_service();
+    let (config, _handle, _db, _) = start_storage_service();
     let (prikey, pubkey) = if enable_signing {
         let prikey = Ed25519PrivateKey::generate_for_testing();
         let pubkey = Ed25519PublicKey::from(&prikey);

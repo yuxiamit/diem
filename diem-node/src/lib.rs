@@ -429,7 +429,7 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
         state_sync_network_handles,
         mempool_notifier,
         consensus_listener,
-        Arc::clone(&db_rw.reader),
+        diem_db.clone(),
         chunk_executor,
         node_config,
         genesis_waypoint,
@@ -491,7 +491,7 @@ pub fn setup_environment(node_config: &NodeConfig, logger: Option<Arc<Logger>>) 
             consensus_network_events,
             Box::new(consensus_notifier),
             consensus_to_mempool_sender,
-            diem_db,
+            db_rw.clone(),
             consensus_reconfig_subscription
                 .expect("Consensus requires a reconfiguration subscription!"),
             peer_metadata_storage,
