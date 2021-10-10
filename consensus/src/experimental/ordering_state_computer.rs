@@ -100,9 +100,10 @@ impl StateComputer for OrderingStateComputer {
 
         let reconfig = target.ledger_info().ends_epoch();
 
-        self.state_computer_for_sync.sync_to(target).await?;
-
         // reset execution phase and commit phase
+        // this happens before sync_to
+        // otherwise race condition might occur:
+        // the buffer manager commits the target version while state sync is fetching chunks
         let (tx, rx) = oneshot::channel::<ResetAck>();
         self.reset_event_channel_tx
             .clone()
@@ -110,6 +111,8 @@ impl StateComputer for OrderingStateComputer {
             .await
             .map_err(|_| Error::ResetDropped)?;
         rx.await.map_err(|_| Error::ResetDropped)?;
+
+        self.state_computer_for_sync.sync_to(target).await?;
 
         Ok(())
     }
