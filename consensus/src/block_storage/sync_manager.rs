@@ -56,7 +56,7 @@ impl BlockStore {
         // block carried by LI is older than my current commit.
         self.commit_root().round() < li.commit_info().round()
             && (!self.block_exists(qc.commit_info().id())
-                || self.ordered_root().round() - self.commit_root().round() > 10)
+                || self.ordered_root().round() - self.commit_root().round() > self.back_pressure_limit)
     }
 
     /// Checks if quorum certificate can be inserted in block store without RPC
