@@ -61,6 +61,7 @@ All consensus messages are signed by their creators and verified by their receiv
     │   ├── block_storage          # In-memory storage of blocks and related data structures
     │   ├── consensusdb            # Database interaction to persist consensus data for safety and liveness
     │   ├── liveness               # RoundState, proposer, and other liveness related code
-    │   └── test_utils             # Mock implementations that are used for testing only
+    │   ├── test_utils             # Mock implementations that are used for testing only
+    │   └── experimental           # Decoupled execution implementation and docs.
     ├── consensus-types            # Consensus data types (i.e. quorum certificates)
     └── safety-rules               # Safety (voting) rules
