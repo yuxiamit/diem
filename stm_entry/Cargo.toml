@@ -1,0 +1,13 @@
+[package]
+name = "stm_entry"
+version = "0.1.0"
+edition = "2021"
+crate-type = ["staticlib"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+diem-vm = { path = "../diem-move/diem-vm" }
+language-e2e-tests = { path = "../language/testing-infra/e2e-tests" }
+diem-state-view = { path = "../storage/state-view" }
+diem-types = { path = "../types" }
+anyhow = "1.0.47"
