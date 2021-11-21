@@ -8193,10 +8193,13 @@ name = "stm_entry"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "diem-framework-releases",
+ "diem-keygen",
  "diem-state-view",
  "diem-types",
  "diem-vm",
  "language-e2e-tests",
+ "vm-genesis",
 ]
 
 [[package]]
