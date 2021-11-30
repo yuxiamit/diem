@@ -7,18 +7,20 @@
 #include <setjmp.h> 
 #include "graph.h"
 #include "parallel.h"
+#include <assert.h>
 #include <pthread.h>
 // we assume we are using cilk
-#include <cilk/cilk.h>
-#include <cilk/cilk_api.h>
-#include <cilk/reducer_min.h>
-#include <cilk/reducer_opadd.h>
-#include <cilk/reducer_list.h>
+// #include <cilk/cilk.h>
+// #include <cilk/cilk_api.h>
+// #include <cilk/reducer_min.h>
+// #include <cilk/reducer_opadd.h>
+// #include <cilk/reducer_list.h>
 
 #include <setjmp.h>
-
+#include "dsm.h"
 #include "txn.h"
 #include "config.h"
+#include "../../stm_entry.h"
 
 #define PRINT_TIME true 
 
@@ -35,6 +37,10 @@
 extern uint32_t totalHoles;
 extern int batchSize;
 
+
+template <class T>
+class DVector;
+
 #if DEBUG
 extern intT readCounter;
 extern intT writeCounter;
@@ -45,7 +51,6 @@ extern uint32_t * rs_ptrs;
 extern uint32_t * ws_ptrs;
 extern __thread int thread_id;
 extern __thread bool initialized;
-extern __thread TxnMan2Phase * txn_man;
 
 extern uint32_t * rs_records_base;
 extern char * ws_records_base;
@@ -191,7 +196,7 @@ public:
 #endif
 
 
-	template <class S>
+template <class S>
 intT speculative_for(S & step, intT s, intT e, int roundsize, 
 		bool hasState=0, int maxTries=-1) 
 {
@@ -234,7 +239,7 @@ intT speculative_for(S & step, intT s, intT e, int roundsize,
 		parallel_for (intT i1 =0; i1 < size; i1++) {
 			if (__builtin_expect(!initialized, 0)) {
 				initialized = true;
-				thread_id = __cilkrts_get_worker_number();
+				thread_id = omp_get_thread_num(); // __cilkrts_get_worker_number();
 			}
 			txn_man = local_txn_man[thread_id];
 			if (i1 >= numberKeep)
@@ -338,3 +343,8 @@ intT speculative_for(S & step, intT s, intT e, int roundsize,
 	return totalProcessed;
 }
 
+#define MAX_ADDRESS (0x7ffffff)
+
+uint32_t parseKey(uint8_t * ptr);
+intT speculative_for_vm(DVector<char> &f, intT s, intT e, int roundsize, 
+		     bool hasState=1, int maxTries=-1);

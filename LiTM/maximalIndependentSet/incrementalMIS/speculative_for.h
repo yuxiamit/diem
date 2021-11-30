@@ -23,6 +23,8 @@
 #include "parallel.h"
 #include "utils.h"
 #include "sequence.h"
+#include <stdint.h>
+#include "../../../stm_entry.h"
 
 struct reservation {
   intT r;

@@ -3,9 +3,12 @@
 #include <string.h>
 #include <pthread.h>
 #include <vector>
-#include "txn2phase.h"
+#include "txn.h"
+// #include "txn2phase.h"
 #include "utils.h"
 using namespace std;
+
+extern __thread TxnMan2Phase * txn_man;
 
 template <class T>
 class DVector 

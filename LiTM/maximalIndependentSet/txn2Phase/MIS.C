@@ -30,6 +30,7 @@
 #include "gettime.h"
 #include "dsm.h"
 #include "MIS.h"
+#include "txn2phase.h"
 
 using namespace std;
 

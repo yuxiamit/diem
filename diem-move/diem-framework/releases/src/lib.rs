@@ -44,6 +44,7 @@ static RELEASES_MAP: Lazy<BTreeMap<Release, Dir>> = Lazy::new(|| {
         Release::Experimental,
         include_dir!("../experimental/releases/artifacts"),
     );
+    // println!("initialized MAP {:?}", map);
     map
 });
 

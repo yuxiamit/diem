@@ -32,10 +32,13 @@
 #include "graphIO.h"
 #include "parseCommandLine.h"
 #include "MIS.h"
+#include "../stm/dsm.h"
 #include "../../../stm_entry.h"
+#include "../stm/txn2phase.h"
+
 using namespace std;
 using namespace benchIO;
-
+#define MAX_ADDRESS (0x7ffff)
 int batchSize;
 
 void timeMIS(graph<intT> G, int rounds, char* outFile) {
@@ -67,7 +70,25 @@ void timeMIS(graph<intT> G, int rounds, char* outFile) {
 }
 
 void test_stm_entry() {
-    entry_vm(1, 1, 1, 0, 100);
+    //const char * p = init_vm();
+
+    // Buffer b = init_entry_vm(NULL, 1, 0, 100);
+    // printf("Buffer len: %d\n", b.len);
+
+    int num_txns = 10;
+    int batch_size = 10;
+    int step = 1;
+    int address_space = MAX_ADDRESS;
+    DVector<char> Flags(address_space, 0);
+    global_man = new GlobalMan(num_txns);
+    //global_man = new GlobalMan(65536 * 16);
+    local_txn_man = new TxnMan2Phase * [getWorkers()];
+    for (int i=0; i<getWorkers();i++) { 
+      local_txn_man[i] = (TxnMan2Phase *) _mm_malloc(sizeof(TxnMan2Phase), 64); 
+      new(local_txn_man[i]) TxnMan2Phase(i);
+    }
+
+    speculative_for_vm(Flags, 0, num_txns/step, batch_size/step); // passing granularity
 }
 
 int parallel_main(int argc, char* argv[]) {
@@ -76,6 +97,7 @@ int parallel_main(int argc, char* argv[]) {
   char* oFile = P.getOptionValue("-o");
   int rounds = P.getOptionIntValue("-r",1);
   batchSize = P.getOptionIntValue("-b", 10000);
+  /*
   int cilkThreadCount = P.getOptionIntValue("-c", -1);
   if(cilkThreadCount > 0)
 	{
@@ -87,7 +109,9 @@ int parallel_main(int argc, char* argv[]) {
 		__cilkrts_init();
 		std::cout << "The number of threads " << cilkThreadCount << std::endl;
 	}
-  graph<intT> G = readGraphFromFile<intT>(iFile);
+  */
+  test_stm_entry();
+  //graph<intT> G = readGraphFromFile<intT>(iFile);
   //timeMIS(G, rounds, oFile);
 }
 
