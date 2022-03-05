@@ -144,7 +144,8 @@ intT speculative_for_vm(DVector<char> &f, intT s, intT e, int roundsize,
 	intT numberKeep = 0; // number of iterations to carry to next round
 	intT totalProcessed = 0;
 	intT curRoundSize = maxRoundSize; //40000; //maxRoundSize; //10000;
-        intT totalKeep = 0;
+    intT totalKeep = 0;
+	intT account_num = 100;
 	
 	char * states = init_vm();
 
@@ -171,22 +172,22 @@ intT speculative_for_vm(DVector<char> &f, intT s, intT e, int roundsize,
 				I[i1] = numberDone + i1;
 			TXN_START(i1 + base_pri, i1);
 			// run txn
-			Buffer b = entry_vm(states, 1, 0, 100); // init_entry_vm(NULL, 1, 0, 100);
+			AccessSet b = entry_vm(states, 200, 0, (numberDone + i1) % account_num); // init_entry_vm(NULL, 1, 0, 100);
 			
-			uint32_t read_len = *(uint32_t*)b.data;
-			uint32_t write_len = *(uint32_t*)(b.data + 4);
+			uint32_t read_len = b.rsize;
+			uint32_t write_len = b.wsize;
 			
-			assert(b.len >= 8 + (read_len + write_len) * 32);
+			// assert(b.len >= 8 + (read_len + write_len) * 32);
 
 			char ans = 0;
 			for(uint32_t i =0; i< read_len; i++)
 			{
-				uint32_t key = parseKey(b.data + 8 + 32 * i);
+				uint32_t key = b.items[i] % MAX_ADDRESS; // parseKey(b.data + 8 + 32 * i);
 				ans += f[key]; // simulate read
 			}
 			for(uint32_t i =0; i< write_len; i++)
 			{
-				uint32_t key = parseKey(b.data + 8 + 32 * i);
+				uint32_t key = b.items[read_len + i] % MAX_ADDRESS; // parseKey(b.data + 8 + 32 * i);
 				f[key] = (char)ans; // simulate write
 			}
 			// txn end

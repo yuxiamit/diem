@@ -23,7 +23,8 @@ use std::ffi::CString;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::mem;
-
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 pub struct HijackingView<S: StateView> {
     pub base_view: S,
@@ -62,6 +63,13 @@ pub struct Buffer {
     pub len: usize,
 }
 
+#[repr(C)]
+pub struct AccessSet {
+    pub items: *mut u64,
+    pub rsize: usize,
+    pub wsize: usize,
+}
+
 #[no_mangle]
 pub extern "C" fn init_vm() -> *mut u8 {
     // setup the VM
@@ -85,8 +93,9 @@ pub extern "C" fn init_vm() -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn entry_vm(genesis_ptr: *mut u8, balance: u64, seq_num: u64, transfer_amount: u64) -> Buffer {
-    let rng_seed: [u8; 32] = [9u8; 32];
+pub extern "C" fn entry_vm(genesis_ptr: *mut u8, balance: u64, seq_num: u64, transfer_amount: u64) -> AccessSet {
+    let truncated_transfer_amount: u8 = (transfer_amount & 0xFF) as u8;
+    let rng_seed: [u8; 32] = [truncated_transfer_amount; 32];
     let mut rng = KeyGen::from_seed(rng_seed);
 
     let data = HashMap::<AccessPath, Vec<u8>>::new();
@@ -130,7 +139,26 @@ pub extern "C" fn entry_vm(genesis_ptr: *mut u8, balance: u64, seq_num: u64, tra
         w.clone()
     }).collect::<Vec<(AccessPath, WriteOp)>>();
 
-    let mut lengths = vec![read_set_vec.len(), write_sec_vec.len()];
+    // let mut lengths = vec![read_set_vec.len(), write_sec_vec.len()];
+
+    let mut items: Vec<u64> = vec![];
+
+    for read_addr in read_set_vec.iter() {
+        let mut s = DefaultHasher::new();
+        read_addr.hash(&mut s);
+        items.push(s.finish())
+    }
+    
+    for write_addr in write_sec_vec.iter() {
+        let mut s = DefaultHasher::new();
+        write_addr.0.hash(&mut s);
+        items.push(s.finish())
+    }
+
+    let items_ptr = items.as_mut_ptr() as *mut u64;
+    mem::forget(items);
+
+    /*
     
     let ratio = mem::size_of::<u32>() / mem::size_of::<u8>();
     let data_len = lengths.len() * ratio;
@@ -160,16 +188,19 @@ pub extern "C" fn entry_vm(genesis_ptr: *mut u8, balance: u64, seq_num: u64, tra
     let total_length = data.len();
 
     mem::forget(data);
+    */
 
-    Buffer {
-        data: data_ptr,
-        len: total_length,
+    AccessSet {
+        rsize: read_set_vec.len(), 
+        wsize: write_sec_vec.len(),
+        items: items_ptr
     }
 }
 
 #[no_mangle]
-pub extern "C" fn init_entry_vm(_genesis: *const c_char, balance: u64, seq_num: u64, transfer_amount: u64) -> Buffer {
-    let rng_seed: [u8; 32] = [9u8; 32];
+pub extern "C" fn init_entry_vm(_genesis: *const c_char, balance: u64, seq_num: u64, transfer_amount: u64) -> AccessSet {
+    let truncated_transfer_amount: u8 = (transfer_amount & 0xFF) as u8;
+    let rng_seed: [u8; 32] = [truncated_transfer_amount; 32];
     let mut rng = KeyGen::from_seed(rng_seed);
 
     let data = HashMap::<AccessPath, Vec<u8>>::new();
@@ -217,7 +248,24 @@ pub extern "C" fn init_entry_vm(_genesis: *const c_char, balance: u64, seq_num: 
         w.clone()
     }).collect::<Vec<(AccessPath, WriteOp)>>();
 
-    let mut lengths = vec![read_set_vec.len(), write_sec_vec.len()];
+    let mut items: Vec<u64> = vec![];
+
+    for read_addr in read_set_vec.iter() {
+        let mut s = DefaultHasher::new();
+        read_addr.hash(&mut s);
+        items.push(s.finish())
+    }
+    
+    for write_addr in write_sec_vec.iter() {
+        let mut s = DefaultHasher::new();
+        write_addr.0.hash(&mut s);
+        items.push(s.finish())
+    }
+
+    let items_ptr = items.as_mut_ptr() as *mut u64;
+    mem::forget(items);
+
+    /*
     
     let ratio = mem::size_of::<u32>() / mem::size_of::<u8>();
     let data_len = lengths.len() * ratio;
@@ -247,9 +295,11 @@ pub extern "C" fn init_entry_vm(_genesis: *const c_char, balance: u64, seq_num: 
     let total_length = data.len();
 
     mem::forget(data);
+    */
 
-    Buffer {
-        data: data_ptr,
-        len: total_length,
+    AccessSet {
+        rsize: read_set_vec.len(), 
+        wsize: write_sec_vec.len(),
+        items: items_ptr
     }
 }

@@ -38,7 +38,7 @@
 
 using namespace std;
 using namespace benchIO;
-#define MAX_ADDRESS (0x7ffff)
+#define MAX_ADDRESS (0x7ffffff)
 int batchSize;
 
 void timeMIS(graph<intT> G, int rounds, char* outFile) {
@@ -75,8 +75,8 @@ void test_stm_entry() {
     // Buffer b = init_entry_vm(NULL, 1, 0, 100);
     // printf("Buffer len: %d\n", b.len);
 
-    int num_txns = 10;
-    int batch_size = 10;
+    int num_txns = 10000;
+    int batch_size = 50;
     int step = 1;
     int address_space = MAX_ADDRESS;
     DVector<char> Flags(address_space, 0);
@@ -88,6 +88,8 @@ void test_stm_entry() {
       new(local_txn_man[i]) TxnMan2Phase(i);
     }
 
+    // AccessSet b = init_entry_vm(NULL, 1, 0, 100);
+    // printf("Buffer len: %d %d\n", b.rsize, b.wsize);
     speculative_for_vm(Flags, 0, num_txns/step, batch_size/step); // passing granularity
 }
 
