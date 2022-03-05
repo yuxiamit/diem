@@ -10,9 +10,9 @@ Step 2: navigate to *LiTM/maximalIndependentSet/txn2Phase* folder
 
         make
 
-Then you should have a MIS executable. Run it.
+Then you should have a MIS executable. Run it. The parameter "123" is just a placeholder without effects.
 
-        ./MIS
+        LD_LIBRARY_PATH=../../../target/debug CARGO_MANIFEST_DIR=../../../diem-move/diem-framework/src ./MIS 123
 
 ## Change the parameter
 
